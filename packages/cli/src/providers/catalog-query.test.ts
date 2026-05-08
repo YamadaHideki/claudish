@@ -15,7 +15,8 @@
  * `DiskCacheV2` (or null) configured per-test. No real disk I/O.
  */
 
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeAll, beforeEach, afterAll, mock } from "bun:test";
+import { writeFileSync, unlinkSync, existsSync } from "node:fs";
 import type { DiskCacheV2, SlimModelEntry } from "./all-models-cache.js";
 
 // ---------------------------------------------------------------------------
@@ -24,17 +25,27 @@ import type { DiskCacheV2, SlimModelEntry } from "./all-models-cache.js";
 //
 // `mock.module()` is hoisted by Bun, so we register the mock BEFORE importing
 // the module under test. `mockReadResult` is mutated in beforeEach.
+//
+// Test path note: in commit 6 the accessors gained a mtime-keyed memo that
+// calls `statSync(ALL_MODELS_CACHE_PATH)` to detect file changes. The mock
+// reports `ALL_MODELS_CACHE_PATH = "/tmp/test-all-models.json"`, so we
+// create a placeholder file in `beforeAll` (and remove it in `afterAll`) so
+// `statSync` succeeds and returns a stable mtime. The mocked
+// `readAllModelsCache` still serves the synthetic `mockReadResult` — the
+// file's contents don't matter, only its mtime does.
+
+const TEST_CACHE_PATH = "/tmp/test-all-models.json";
 
 let mockReadResult: DiskCacheV2 | null = null;
 
 mock.module("./all-models-cache.js", () => ({
   readAllModelsCache: () => mockReadResult,
-  // catalog-query.ts only imports readAllModelsCache + the SlimModelEntry
-  // type. The other exports are present in the real module but unused here;
-  // we still expose them as no-ops so a type-only import doesn't crash if
-  // tree-shaking doesn't strip it.
+  // catalog-query.ts imports readAllModelsCache + ALL_MODELS_CACHE_PATH +
+  // the SlimModelEntry type. The other exports are present in the real
+  // module but unused here; we still expose them as no-ops so a type-only
+  // import doesn't crash if tree-shaking doesn't strip it.
   writeAllModelsCache: () => undefined,
-  ALL_MODELS_CACHE_PATH: "/tmp/test-all-models.json",
+  ALL_MODELS_CACHE_PATH: TEST_CACHE_PATH,
 }));
 
 // Now import the module under test. The mock above is wired in.
@@ -42,7 +53,31 @@ import {
   findEntryByAlias,
   findEntryByModelId,
   findVisionAlias,
+  _resetMemo,
 } from "./catalog-query.js";
+
+// Touch the file so `statSync(ALL_MODELS_CACHE_PATH)` resolves in the memo
+// path. The mocked `readAllModelsCache` ignores the file contents.
+beforeAll(() => {
+  writeFileSync(TEST_CACHE_PATH, "{}", "utf-8");
+});
+
+afterAll(() => {
+  if (existsSync(TEST_CACHE_PATH)) {
+    try {
+      unlinkSync(TEST_CACHE_PATH);
+    } catch {
+      // Best-effort cleanup; ignore if another test already removed it.
+    }
+  }
+});
+
+// Reset the in-module memo before every test so swapping `mockReadResult`
+// takes effect immediately rather than returning the previously-cached
+// entries.
+beforeEach(() => {
+  _resetMemo();
+});
 
 // ---------------------------------------------------------------------------
 // Test fixtures

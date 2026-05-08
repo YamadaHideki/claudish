@@ -12,6 +12,18 @@
  * Architecture:
  *   getModelPricing() → in-memory map → disk cache → provider defaults
  *   warmPricingCache() → background: disk cache (no network fetch)
+ *
+ * Provider → OpenRouter ID resolution:
+ *   Non-OpenRouter providers (`openai`, `google`, `kimi`, `glm`, ...) need
+ *   their `(provider, modelName)` mapped to an OpenRouter `vendor/model` ID
+ *   to consult the pricing map. We do this by reading the slim catalog's
+ *   `aggregators[]` field via `catalog-query.ts` — each entry already lists
+ *   `{provider: "openrouter", externalId: "vendor/model"}` for its OR
+ *   listing, so we look up the entry by alias/modelId and use the
+ *   `externalId` directly. Replaces the static `PROVIDER_TO_OR_PREFIX` map
+ *   that was deleted in commit 6 (architecture §6.C). The `glm → zhipu/`
+ *   bug noted in F6 is fixed by construction since the catalog has the
+ *   correct vendor (`z-ai/`) on its `aggregators` array.
  */
 
 import { readFileSync, existsSync, statSync } from "node:fs";
@@ -22,6 +34,10 @@ import {
   registerDynamicPricingLookup,
   type ModelPricing,
 } from "../handlers/shared/remote-provider-types.js";
+import {
+  findEntryByAlias,
+  findEntryByModelId,
+} from "../providers/catalog-query.js";
 
 // In-memory pricing map: OpenRouter model ID → pricing
 const pricingMap = new Map<string, ModelPricing>();
@@ -35,63 +51,50 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 let cacheWarmed = false;
 
 /**
- * Map from claudish provider names to OpenRouter model ID prefixes.
- * OpenRouter IDs look like "openai/gpt-5", "google/gemini-2.5-pro", etc.
+ * Find pricing for an OpenRouter model ID using prefix-match fallback.
+ *
+ * The pricing map is keyed by full OR IDs like `openai/gpt-5`. For requests
+ * that supply a more specific variant (e.g., `gpt-4o-2024-08-06`), we walk
+ * the map and return the first entry whose key the request starts with.
+ *
+ * Returns `undefined` on miss.
  */
-const PROVIDER_TO_OR_PREFIX: Record<string, string[]> = {
-  openai: ["openai/"],
-  oai: ["openai/"],
-  gemini: ["google/"],
-  google: ["google/"],
-  minimax: ["minimax/"],
-  mm: ["minimax/"],
-  kimi: ["moonshotai/"],
-  moonshot: ["moonshotai/"],
-  glm: ["zhipu/"],
-  zhipu: ["zhipu/"],
-  ollamacloud: ["ollamacloud/", "meta-llama/", "qwen/", "deepseek/"],
-  oc: ["ollamacloud/", "meta-llama/", "qwen/", "deepseek/"],
-};
+function prefixMatch(modelName: string): ModelPricing | undefined {
+  for (const [key, pricing] of pricingMap) {
+    if (modelName.startsWith(key)) return pricing;
+  }
+  return undefined;
+}
 
 /**
  * Synchronous lookup of dynamic pricing for a provider + model.
  * Returns undefined if no dynamic pricing is available (caller should fall back).
+ *
+ * For `provider === "openrouter"` the model name IS the full OpenRouter ID
+ * (`openai/gpt-5`), so we hit `pricingMap` directly with a prefix-match
+ * fallback for variant strings.
+ *
+ * For all other providers we consult the slim catalog's `aggregators[]`
+ * field (architecture §6.C): find the entry by alias or modelId, locate its
+ * OpenRouter aggregator entry, then look up the `externalId` in the
+ * pricing map. This replaces the legacy `PROVIDER_TO_OR_PREFIX` map and
+ * inherits whatever vendor prefix the catalog reports.
  */
 export function getDynamicPricingSync(
   provider: string,
   modelName: string
 ): ModelPricing | undefined {
-  // For OpenRouter, the model name IS the full OpenRouter ID (e.g., "openai/gpt-5")
   if (provider === "openrouter") {
-    const direct = pricingMap.get(modelName);
-    if (direct) return direct;
-    // Try prefix match
-    for (const [key, pricing] of pricingMap) {
-      if (modelName.startsWith(key)) return pricing;
-    }
-    return undefined;
+    return pricingMap.get(modelName) ?? prefixMatch(modelName);
   }
 
-  const prefixes = PROVIDER_TO_OR_PREFIX[provider.toLowerCase()];
-  if (!prefixes) return undefined;
+  const entry = findEntryByAlias(modelName) ?? findEntryByModelId(modelName);
+  if (!entry) return undefined;
 
-  // Try exact match with each prefix
-  for (const prefix of prefixes) {
-    const orId = `${prefix}${modelName}`;
-    const pricing = pricingMap.get(orId);
-    if (pricing) return pricing;
-  }
+  const orAgg = entry.aggregators?.find((a) => a.provider === "openrouter");
+  if (!orAgg) return undefined;
 
-  // Try prefix match (e.g., "gpt-4o-2024-08-06" matches "openai/gpt-4o")
-  for (const prefix of prefixes) {
-    for (const [key, pricing] of pricingMap) {
-      if (!key.startsWith(prefix)) continue;
-      const orModelName = key.slice(prefix.length);
-      if (modelName.startsWith(orModelName)) return pricing;
-    }
-  }
-
-  return undefined;
+  return pricingMap.get(orAgg.externalId);
 }
 
 /**
