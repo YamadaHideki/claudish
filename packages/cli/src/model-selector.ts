@@ -323,26 +323,41 @@ function compareVersionPartsDesc(a: number[], b: number[]): number {
   return 0;
 }
 
+/**
+ * Compare two records by `releaseDate` (desc), then by version-parts in id
+ * (desc), then by id (asc). Records without a `releaseDate` sort BEFORE
+ * dated records — they default to epoch 0. Used by every list/picker that
+ * shows models so the newest is always at the top.
+ *
+ * Exported so cli.ts can apply the same ordering to ModelDoc-shaped lists
+ * (`--list-models`, `--top-models`, etc.) without duplicating the logic.
+ */
+export function compareByReleaseDateDesc(
+  a: { releaseDate?: string; id?: string; modelId?: string },
+  b: { releaseDate?: string; id?: string; modelId?: string }
+): number {
+  const aReleaseRaw = a.releaseDate ? Date.parse(a.releaseDate) : 0;
+  const bReleaseRaw = b.releaseDate ? Date.parse(b.releaseDate) : 0;
+  const aRelease = Number.isNaN(aReleaseRaw) ? 0 : aReleaseRaw;
+  const bRelease = Number.isNaN(bReleaseRaw) ? 0 : bReleaseRaw;
+  if (aRelease !== bRelease) {
+    return bRelease - aRelease;
+  }
+
+  const aId = a.id ?? a.modelId ?? "";
+  const bId = b.id ?? b.modelId ?? "";
+  const versionCompare = compareVersionPartsDesc(
+    extractVersionParts(aId),
+    extractVersionParts(bId)
+  );
+  if (versionCompare !== 0) {
+    return versionCompare;
+  }
+  return aId.localeCompare(bId);
+}
+
 function sortModelsNewestFirst(models: ModelInfo[]): ModelInfo[] {
-  return [...models].sort((a, b) => {
-    const aRelease = a.releaseDate ? Date.parse(a.releaseDate) : 0;
-    const bRelease = b.releaseDate ? Date.parse(b.releaseDate) : 0;
-    const aReleaseSafe = Number.isNaN(aRelease) ? 0 : aRelease;
-    const bReleaseSafe = Number.isNaN(bRelease) ? 0 : bRelease;
-    if (aReleaseSafe !== bReleaseSafe) {
-      return bReleaseSafe - aReleaseSafe;
-    }
-
-    const versionCompare = compareVersionPartsDesc(
-      extractVersionParts(a.id),
-      extractVersionParts(b.id)
-    );
-    if (versionCompare !== 0) {
-      return versionCompare;
-    }
-
-    return a.id.localeCompare(b.id);
-  });
+  return [...models].sort(compareByReleaseDateDesc);
 }
 
 /**
@@ -370,6 +385,10 @@ function formatModelChoice(model: ModelInfo, showSource = false): string {
   const capsStr = caps ? ` [${caps}]` : "";
   const priceStr = model.pricing?.average || "N/A";
   const ctxStr = model.context || "N/A";
+  // Show release date as a short year-month suffix when present so the
+  // newest-first sort is visible to the user. Slim catalog dates are
+  // ISO date strings (`2026-05-07`); take just the YYYY-MM prefix.
+  const dateStr = model.releaseDate ? `, ${model.releaseDate.slice(0, 7)}` : "";
 
   if (showSource && model.source) {
     const sourceTagMap: Record<string, string> = {
@@ -390,10 +409,10 @@ function formatModelChoice(model: ModelInfo, showSource = false): string {
       LiteLLM: "LL",
     };
     const sourceTag = sourceTagMap[model.source] || model.source;
-    return `${sourceTag} ${model.id} (${priceStr}, ${ctxStr}${capsStr})`;
+    return `${sourceTag} ${model.id} (${priceStr}, ${ctxStr}${capsStr}${dateStr})`;
   }
 
-  return `${model.id} (${model.provider}, ${priceStr}, ${ctxStr}${capsStr})`;
+  return `${model.id} (${model.provider}, ${priceStr}, ${ctxStr}${capsStr}${dateStr})`;
 }
 
 /**
@@ -521,7 +540,7 @@ async function fetchPickerModels(
 
   if (searchTerm) {
     const found = await catalog.searchModels(searchTerm, 100);
-    return dedupeModels(found.map(catalogModelToModelInfo));
+    return sortModelsNewestFirst(dedupeModels(found.map(catalogModelToModelInfo)));
   }
 
   return defaultModels;
@@ -552,7 +571,7 @@ export async function selectModel(options: ModelSelectorOptions = {}): Promise<s
 
     const topModels =
       top100Result.status === "fulfilled"
-        ? dedupeModels(top100Result.value.models.map(modelDocToModelInfo))
+        ? sortModelsNewestFirst(dedupeModels(top100Result.value.models.map(modelDocToModelInfo)))
         : [];
     recommendedModels = recommendedResult.status === "fulfilled" ? recommendedResult.value : [];
 

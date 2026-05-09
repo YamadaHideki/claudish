@@ -34,6 +34,8 @@ export interface SlimModelEntry {
   modelId: string;
   aliases: string[];
   sources: Record<string, { externalId: string }>;
+  /** Official/curated release date in ISO date format, when Firebase has one */
+  releaseDate?: string;
   /** Context window in tokens (present when Firebase has it) */
   contextWindow?: number;
   /** Whether model supports vision/image input (present when Firebase has it) */

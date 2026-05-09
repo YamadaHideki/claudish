@@ -17,6 +17,7 @@ import {
   type RecommendedModelGroup,
   type ModelDoc,
 } from "./model-loader.js";
+import { compareByReleaseDateDesc } from "./model-selector.js";
 import { BUILTIN_PROVIDERS } from "./providers/provider-definitions.js";
 import {
   readFileSync,
@@ -781,18 +782,8 @@ async function searchAndPrintModels(query: string, jsonOutput: boolean): Promise
   }
 
   console.log(`\nFound ${results.length} matching models:\n`);
-  console.log("  Model                          Provider    Pricing     Context  Caps");
-  console.log("  " + "─".repeat(80));
-
-  for (const m of results) {
-    const id = m.modelId.length > 30 ? m.modelId.substring(0, 27) + "..." : m.modelId;
-    const idPadded = id.padEnd(30);
-    const prov = (m.provider || "").padEnd(10);
-    const price = formatModelDocPricing(m.pricing).padEnd(10);
-    const ctx = formatModelDocContext(m.contextWindow).padEnd(7);
-    const caps = formatModelDocCaps(m.capabilities);
-    console.log(`  ${idPadded} ${prov} ${price} ${ctx} ${caps}`);
-  }
+  const sorted = [...results].sort(compareByReleaseDateDesc);
+  renderModelDocTable(sorted, /* showRank */ false);
   console.log("");
   console.log("Caps: T = tools  R = reasoning  V = vision");
   console.log("");
@@ -807,10 +798,10 @@ async function searchAndPrintModels(query: string, jsonOutput: boolean): Promise
  */
 function renderModelDocTable(models: Array<ModelDoc & { rank?: number }>, showRank: boolean): void {
   const header = showRank
-    ? "  #    Model                          Provider    Pricing     Context  Caps"
-    : "       Model                          Provider    Pricing     Context  Caps";
+    ? "  #    Model                          Provider    Pricing     Context  Caps  Released"
+    : "       Model                          Provider    Pricing     Context  Caps  Released";
   console.log(header);
-  console.log("  " + "─".repeat(80));
+  console.log("  " + "─".repeat(90));
   for (const m of models) {
     const rankCell = showRank
       ? String(m.rank ?? "").padStart(3) + "  "
@@ -821,8 +812,9 @@ function renderModelDocTable(models: Array<ModelDoc & { rank?: number }>, showRa
     const prov = (m.provider || "").padEnd(10);
     const price = formatModelDocPricing(m.pricing).padEnd(10);
     const ctx = formatModelDocContext(m.contextWindow).padEnd(7);
-    const caps = formatModelDocCaps(m.capabilities);
-    console.log(`  ${rankCell}${idPadded} ${prov} ${price} ${ctx} ${caps}`);
+    const caps = formatModelDocCaps(m.capabilities).padEnd(5);
+    const released = m.releaseDate ?? "—";
+    console.log(`  ${rankCell}${idPadded} ${prov} ${price} ${ctx} ${caps} ${released}`);
   }
 }
 
@@ -888,7 +880,8 @@ async function printTop100(jsonOutput: boolean): Promise<void> {
   if (response.models.length === 0) {
     console.log("  No eligible models in the catalog.");
   } else {
-    renderModelDocTable(response.models, /* showRank */ true);
+    const sorted = [...response.models].sort(compareByReleaseDateDesc);
+    renderModelDocTable(sorted, /* showRank */ true);
     console.log("");
     console.log("  Caps: T = tools  R = reasoning  V = vision");
   }
@@ -936,7 +929,8 @@ async function printByProvider(providerSlug: string, jsonOutput: boolean): Promi
   }
 
   console.log(`\nProvider: ${providerSlug} (${models.length} active models)\n`);
-  renderModelDocTable(models, /* showRank */ false);
+  const sorted = [...models].sort(compareByReleaseDateDesc);
+  renderModelDocTable(sorted, /* showRank */ false);
   console.log("");
   console.log("  Caps: T = tools  R = reasoning  V = vision");
   console.log("");

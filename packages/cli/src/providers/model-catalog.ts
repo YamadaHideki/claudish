@@ -159,6 +159,7 @@ function slimEntryToCatalogModel(entry: SlimModelEntry): CatalogModel {
     aggregators: entry.aggregators,
     contextWindow: entry.contextWindow,
     supportsVision: entry.supportsVision,
+    releaseDate: entry.releaseDate,
   };
 }
 
