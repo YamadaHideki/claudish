@@ -24,6 +24,10 @@ export function RoutingDetail({ probeMode, mergedRules }: RoutingDetailProps) {
   const globalOverrides = globalRules.filter((r) => r.overridesDefault).length;
   const globalCustom = globalRules.length - globalOverrides;
 
+  // Format counts with a fixed-width number column so the labels line up
+  // even when counts grow into double digits.
+  const fmtCount = (n: number): string => String(n).padStart(2, " ");
+
   return (
     <box
       height={DETAIL_H}
@@ -35,36 +39,41 @@ export function RoutingDetail({ probeMode, mergedRules }: RoutingDetailProps) {
       flexDirection="column"
       paddingX={1}
     >
-      <text>
-        <span fg={C.dim} bold>{" · "}</span>
-        <span fg={C.fgMuted}>{"default · "}</span>
-        <span fg={C.green} bold>{"•"}</span>
-        <span fg={C.fgMuted}>{" custom global · "}</span>
-        <span fg={C.yellow} bold>{"★"}</span>
-        <span fg={C.fgMuted}>{" global override of default · "}</span>
-        <span fg={C.cyan} bold>{"▴"}</span>
-        <span fg={C.fgMuted}>{" project (.claudish.json)"}</span>
-      </text>
-      <text>
-        <span fg={C.fgMuted}>{"  Each row owns its scope: "}</span>
-        <span fg={C.green} bold>{"d"}</span>
-        <span fg={C.fgMuted}>{" deletes from that scope; "}</span>
-        <span fg={C.green} bold>{"e"}</span>
-        <span fg={C.fgMuted}>{" can move scope. Project beats global beats default at runtime."}</span>
-      </text>
-      <text>
-        <span fg={C.cyan} bold>{`  ${defaults}`}</span>
-        <span fg={C.fgMuted}>{" default"}</span>
-        <span fg={C.dim}>{"  ·  "}</span>
-        <span fg={C.green} bold>{`${globalCustom}`}</span>
-        <span fg={C.fgMuted}>{" global custom"}</span>
-        <span fg={C.dim}>{"  ·  "}</span>
-        <span fg={C.yellow} bold>{`${globalOverrides}`}</span>
-        <span fg={C.fgMuted}>{" override" + (globalOverrides === 1 ? "" : "s")}</span>
-        <span fg={C.dim}>{"  ·  "}</span>
-        <span fg={C.cyan} bold>{`${projectRules.length}`}</span>
-        <span fg={C.fgMuted}>{" project"}</span>
-      </text>
+      {/* Two columns of marker/count pairs on each line. Markers stay in
+          column 1 (single glyph) so the eye can scan vertically. Labels
+          and counts line up via fixed-width pads. */}
+      <box height={1} flexDirection="row">
+        <box width={32}>
+          <text>
+            <span fg={C.dim} bold>{" ·  "}</span>
+            <span fg={C.fgMuted}>{"built-in default     "}</span>
+            <span fg={C.cyan} bold>{fmtCount(defaults)}</span>
+          </text>
+        </box>
+        <box>
+          <text>
+            <span fg={C.green} bold>{"  •  "}</span>
+            <span fg={C.fgMuted}>{"global custom        "}</span>
+            <span fg={C.green} bold>{fmtCount(globalCustom)}</span>
+          </text>
+        </box>
+      </box>
+      <box height={1} flexDirection="row">
+        <box width={32}>
+          <text>
+            <span fg={C.yellow} bold>{" ★  "}</span>
+            <span fg={C.fgMuted}>{"override of default  "}</span>
+            <span fg={C.yellow} bold>{fmtCount(globalOverrides)}</span>
+          </text>
+        </box>
+        <box>
+          <text>
+            <span fg={C.cyan} bold>{"  ▴  "}</span>
+            <span fg={C.fgMuted}>{"project rule         "}</span>
+            <span fg={C.cyan} bold>{fmtCount(projectRules.length)}</span>
+          </text>
+        </box>
+      </box>
     </box>
   );
 }
