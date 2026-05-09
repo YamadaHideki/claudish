@@ -2,6 +2,47 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.1.0] - 2026-05-09
+
+### Bug Fixes
+
+- externalize @opentui/* so dist bundle loads native platform binary *(packaging)* ([`0beb77a`](https://github.com/MadAppGang/claudish/commit/0beb77a59baa1089b8fa0fa3925e1621c846df42))
+- return 400 on count_tokens with missing model *(proxy)* ([`7d3f4f3`](https://github.com/MadAppGang/claudish/commit/7d3f4f366476e0e5bc8f0cf1de5ca23cd7c9afcf))
+- rewrite model selector on CatalogClient, fix empty Zen list *(picker)* ([`5c6e9bf`](https://github.com/MadAppGang/claudish/commit/5c6e9bfe1f3825795365ed9693e14ed9c8816af8))
+
+### Documentation
+
+- update CHANGELOG.md for v7.0.3([`a944199`](https://github.com/MadAppGang/claudish/commit/a9441999085fedeb56b066060ff2d6e4adf36142))
+
+### New Features
+
+- sort all model lists by releaseDate (newest first) + show date *(picker)* ([`1bdafe9`](https://github.com/MadAppGang/claudish/commit/1bdafe9bac2313522d65513598b7abe7f10f43be))
+- wire defaultProvider as final fallback + truthful TUI render *(routing)* ([`9ec6eab`](https://github.com/MadAppGang/claudish/commit/9ec6eab892488091ad58733f8438d88a5a311ad9))
+- add catalog-query.ts read-only accessors *(catalog)* ([`8afff4f`](https://github.com/MadAppGang/claudish/commit/8afff4f047486aa438cf71acec940d267ab2b44f))
+- warm catalog before proxy startup (Option D) *(launcher)* ([`77d26ae`](https://github.com/MadAppGang/claudish/commit/77d26ae38cb8ddeeb6ffb88fbe4954703b00f622))
+- add refreshCatalog() returning RefreshOutcome to resolver interface *(catalog)* ([`9ba5dfc`](https://github.com/MadAppGang/claudish/commit/9ba5dfc208d92f1655531449542c5960700a548f))
+- default routing rules + route() over user-rewritable schema *(routing)* ([`ceec76a`](https://github.com/MadAppGang/claudish/commit/ceec76a1c04232a501b0708d7717d7e5240df462))
+- introduce CatalogClient and unify Firebase cache TTL *(catalog)* ([`0d9e1e9`](https://github.com/MadAppGang/claudish/commit/0d9e1e92a37e2a5aa3124dd3fb0586c9d0e50d80))
+
+### Other Changes
+
+- release v7.1.0([`d6c0483`](https://github.com/MadAppGang/claudish/commit/d6c048373e3058d66b11b46e7a3e6e1ddc59578b))
+- fix writeFileSync import, tsconfig, claudeArgs strict-null *(types)* ([`27a60ba`](https://github.com/MadAppGang/claudish/commit/27a60ba45676e0685a1634e0644f9a774539c302))
+- delete static-fallback.ts (OPENROUTER_VENDOR_MAP) *(catalog)* ([`ba650d5`](https://github.com/MadAppGang/claudish/commit/ba650d51d11ec7a2fbaa37ea326bca1566720ca2))
+- plumb --force-update + --skip-models-update into ClaudishConfig *(cli)* ([`3849727`](https://github.com/MadAppGang/claudish/commit/3849727034487d133d5d23930e41e124c8114f28))
+- extract landing page and model-update script to models-index repo([`57c1e53`](https://github.com/MadAppGang/claudish/commit/57c1e53767d22c3f890e8a5464be4caea1f2f346))
+
+### Refactoring
+
+- apply Phase 5 quality follow-ups (M1, M2, L1-L3) *(catalog)* ([`a0035f3`](https://github.com/MadAppGang/claudish/commit/a0035f3de3beb54b95007120692bc9184977d71f))
+- replace gpt-5.4 probe + gemini help-text hardcodes *(quota)* ([`617f83c`](https://github.com/MadAppGang/claudish/commit/617f83c3928cdd0d6e5801619a673d2cca0f1c0b))
+- delete PROVIDER_TO_OR_PREFIX, route pricing through aggregators[] *(cleanup)* ([`8d60d5f`](https://github.com/MadAppGang/claudish/commit/8d60d5fe440438ccb05c0738a4860a5d89636183))
+- replace haiku/sonnet/opus tier map + VISION_MODEL with catalog lookups *(cleanup)* ([`06519a9`](https://github.com/MadAppGang/claudish/commit/06519a9601f31a932168b0f91f687d6e3ce032d4))
+- delete direct-provider catalog code, bundled fallback, legacy routing([`029d8fd`](https://github.com/MadAppGang/claudish/commit/029d8fd07eddb1bcf56f61c03274f04688815ba9))
+- extend ModelDoc with aggregators, vendors, availableInPlans *(model-loader)* ([`2ec025f`](https://github.com/MadAppGang/claudish/commit/2ec025fbc60406c8d46216f88ec97cbc3a3aef04))
+- dedupe CODE_ASSIST_FALLBACK_CHAIN *(gemini)* ([`eb91bed`](https://github.com/MadAppGang/claudish/commit/eb91bed628e98871a8fcba90cc2c8f4ea9e93ec2))
+- finalize Firebase migration, remove static MODEL_CATALOG *(catalog)* ([`3edc60f`](https://github.com/MadAppGang/claudish/commit/3edc60fac7b88bf51569be389c37e9c5c32152fb))
+
 ## [7.0.3] - 2026-04-21
 
 ### Bug Fixes
