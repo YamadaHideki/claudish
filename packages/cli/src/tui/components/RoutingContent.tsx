@@ -1,4 +1,6 @@
 /** @jsxImportSource @opentui/react */
+import { useEffect, useRef } from "react";
+import type { ScrollBoxRenderable } from "@opentui/core";
 import { C } from "../theme.js";
 import { DETAIL_H, CHAIN_PROVIDERS } from "../constants.js";
 import { DEFAULT_ROUTING_RULES } from "../../providers/default-routing-rules.js";
@@ -74,6 +76,41 @@ export function RoutingContent({
   contentH,
   isRoutingInput,
 }: RoutingContentProps) {
+  // Refs for the two scrolling lists. We auto-scroll the cursor into view via
+  // an effect; the scrollbox itself is unfocused so it doesn't capture our
+  // useKeyboard arrow keys (cursor navigation is owned by App.tsx).
+  const rulesScrollRef = useRef<ScrollBoxRenderable | null>(null);
+  const chainScrollRef = useRef<ScrollBoxRenderable | null>(null);
+
+  // Each rule row is height={1}, so the cursor's pixel position == providerIndex.
+  // Scroll only when the cursor row would be outside the current viewport, then
+  // scroll to keep the row at least one line away from the top/bottom edge.
+  useEffect(() => {
+    const sb = rulesScrollRef.current;
+    if (!sb || mergedRules.length === 0) return;
+    const viewportH = sb.viewport.height;
+    const top = sb.scrollTop;
+    const bottom = top + viewportH;
+    if (providerIndex < top) {
+      sb.scrollTo({ x: 0, y: providerIndex });
+    } else if (providerIndex >= bottom) {
+      sb.scrollTo({ x: 0, y: providerIndex - viewportH + 1 });
+    }
+  }, [providerIndex, mergedRules.length]);
+
+  useEffect(() => {
+    const sb = chainScrollRef.current;
+    if (!sb) return;
+    const viewportH = sb.viewport.height;
+    const top = sb.scrollTop;
+    const bottom = top + viewportH;
+    if (chainCursor < top) {
+      sb.scrollTo({ x: 0, y: chainCursor });
+    } else if (chainCursor >= bottom) {
+      sb.scrollTo({ x: 0, y: chainCursor - viewportH + 1 });
+    }
+  }, [chainCursor, mode]);
+
   // Full-screen probe takes over when not idle
   const probeBoxH = contentH + DETAIL_H + 1; // spans content + detail area
 
@@ -279,7 +316,6 @@ export function RoutingContent({
     );
   }
 
-  const innerH = contentH - 2;
 
   return (
     <box
@@ -293,14 +329,16 @@ export function RoutingContent({
     >
       {/* Catch-all default — the only "global" default that actually exists.
           Per-pattern defaults (gpt-* → codex/openai/openrouter, etc.) are
-          visible in the rule table below alongside any user overrides. */}
-      <text>
+          visible in the rule table below alongside any user overrides.
+          Each header `<text>` is pinned to height={1} so flex layout doesn't
+          collapse them into the scrollbox below in tight viewports. */}
+      <text height={1}>
         <span fg={C.blue} bold>
           {" Catch-all default:"}
         </span>
         <span fg={C.fgMuted}>{"  (used for any model not matched by a rule)"}</span>
       </text>
-      <text>
+      <text height={1}>
         <span fg={C.dim}>{"  * "}</span>
         <span fg={C.dim}>{"→ "}</span>
         <span fg={C.cyan}>
@@ -322,19 +360,19 @@ export function RoutingContent({
           );
         })()}
       </text>
-      <text>
+      <text height={1}>
         <span fg={C.dim}>{" ─".repeat(Math.max(1, Math.floor((width - 6) / 2)))}</span>
       </text>
       {/* Rules table — built-in defaults followed by user customizations.
           The catch-all `*` is shown above and excluded from this list. */}
-      <text>
+      <text height={1}>
         <span fg={C.blue} bold>
           {" Rules:"}
         </span>
         <span fg={C.fgMuted}>{"  (a add new · e override selected · d delete user rule)"}</span>
       </text>
       {!isRoutingInput && mergedRules.length === 0 && (
-        <text>
+        <text height={1}>
           <span fg={C.fgMuted}>{" No rules. Press "}</span>
           <span fg={C.green} bold>
             a
@@ -342,9 +380,9 @@ export function RoutingContent({
           <span fg={C.fgMuted}>{" to add."}</span>
         </text>
       )}
-      {mergedRules.length > 0 && (
+      {mergedRules.length > 0 && !isRoutingInput && (
         <>
-          <text>
+          <text height={1}>
             <span fg={C.blue} bold>
               {"  "}
             </span>
@@ -355,57 +393,68 @@ export function RoutingContent({
               {"CHAIN"}
             </span>
           </text>
-          {mergedRules.slice(0, Math.max(0, innerH - 3)).map((rule, idx) => {
-            const sel = idx === providerIndex;
-            const isDefault = rule.kind === "default";
-            // Marker column: ★ = user override of a default, • = user-only,
-            // · = built-in default. Visible without color.
-            const marker = isDefault ? "·" : rule.overridesDefault ? "★" : "•";
-            const markerFg = isDefault ? C.dim : rule.overridesDefault ? C.yellow : C.green;
-            // Pattern column: white when selected, cyan when user, dim when default.
-            const patFg = sel ? C.white : isDefault ? C.fgMuted : C.cyan;
-            // Chain column: cyan when selected, fgMuted when user, dim when default.
-            const chainFg = sel ? C.cyan : isDefault ? C.dim : C.fgMuted;
-            return (
-              <box
-                key={`${rule.kind}-${rule.pattern}`}
-                height={1}
-                flexDirection="row"
-                backgroundColor={sel ? C.bgHighlight : C.bg}
-              >
-                <text>
-                  <span fg={markerFg} bold={!isDefault}>
-                    {` ${marker} `}
-                  </span>
-                  <span fg={patFg} bold={sel}>
-                    {rule.pattern.padEnd(16).substring(0, 16)}
-                  </span>
-                  <span fg={C.dim}>{"  "}</span>
-                  <span fg={chainFg}>{chainStr(rule.chain)}</span>
-                </text>
-              </box>
-            );
-          })}
+          {/* Native OpenTUI scrollbox. Unfocused: cursor navigation stays in
+              App.tsx's useKeyboard handler; we sync scroll position via the
+              effect above when providerIndex changes. */}
+          <scrollbox
+            ref={rulesScrollRef}
+            scrollX={false}
+            scrollY={true}
+            focused={false}
+            style={{ flexGrow: 1 }}
+          >
+            {mergedRules.map((rule, idx) => {
+              const sel = idx === providerIndex;
+              const isDefault = rule.kind === "default";
+              // Marker column: ★ = user override of a default, • = user-only,
+              // · = built-in default. Visible without color.
+              const marker = isDefault ? "·" : rule.overridesDefault ? "★" : "•";
+              const markerFg = isDefault ? C.dim : rule.overridesDefault ? C.yellow : C.green;
+              // Pattern column: white when selected, cyan when user, dim when default.
+              const patFg = sel ? C.white : isDefault ? C.fgMuted : C.cyan;
+              // Chain column: cyan when selected, fgMuted when user, dim when default.
+              const chainFg = sel ? C.cyan : isDefault ? C.dim : C.fgMuted;
+              return (
+                <box
+                  key={`${rule.kind}-${rule.pattern}`}
+                  height={1}
+                  flexDirection="row"
+                  backgroundColor={sel ? C.bgHighlight : C.bg}
+                >
+                  <text>
+                    <span fg={markerFg} bold={!isDefault}>
+                      {` ${marker} `}
+                    </span>
+                    <span fg={patFg} bold={sel}>
+                      {rule.pattern.padEnd(16).substring(0, 16)}
+                    </span>
+                    <span fg={C.dim}>{"  "}</span>
+                    <span fg={chainFg}>{chainStr(rule.chain)}</span>
+                  </text>
+                </box>
+              );
+            })}
+          </scrollbox>
         </>
       )}
 
       {/* Input fields */}
       {mode === "add_routing_pattern" && (
         <box flexDirection="column">
-          <text>
+          <text height={1}>
             <span fg={C.blue} bold>
               {"Pattern "}
             </span>
             <span fg={C.dim}>{"(e.g. kimi-*, gpt-4o):"}</span>
           </text>
-          <text>
+          <text height={1}>
             <span fg={C.green} bold>
               {"> "}
             </span>
             <span fg={C.white}>{routingPattern}</span>
             <span fg={C.cyan}>{"█"}</span>
           </text>
-          <text>
+          <text height={1}>
             <span fg={C.green} bold>
               Enter{" "}
             </span>
@@ -418,8 +467,8 @@ export function RoutingContent({
         </box>
       )}
       {mode === "add_routing_chain" && (
-        <box flexDirection="column">
-          <text>
+        <box flexDirection="column" style={{ flexGrow: 1 }}>
+          <text height={1}>
             <span fg={C.blue} bold>
               {"Select providers for "}
             </span>
@@ -429,39 +478,50 @@ export function RoutingContent({
             <span fg={C.dim}>{" (Space=toggle, 1-9=set position, Enter=save)"}</span>
           </text>
           {chainOrder.length > 0 && (
-            <text>
+            <text height={1}>
               <span fg={C.fgMuted}>{"  Chain: "}</span>
               <span fg={C.cyan}>{chainOrder.join(" → ")}</span>
             </text>
           )}
-          {CHAIN_PROVIDERS.map((prov, idx) => {
-            const isCursor = idx === chainCursor;
-            const isOn = chainSelected.has(prov.name);
-            const pos = isOn ? chainOrder.indexOf(prov.name) + 1 : 0;
-            const hasKey = !!(
-              config.apiKeys?.[prov.apiKeyEnvVar] || process.env[prov.apiKeyEnvVar]
-            );
-            const label = prov.displayName.padEnd(18).substring(0, 18);
-            return (
-              <box key={prov.name} height={1} backgroundColor={isCursor ? C.bgHighlight : C.bg}>
-                <text>
-                  {isOn ? (
-                    <span fg={C.green} bold>{` [${pos}] `}</span>
-                  ) : (
-                    <span fg={C.dim}>{" [ ] "}</span>
-                  )}
-                  <span fg={isCursor ? C.white : hasKey ? C.fgMuted : C.dim} bold={isCursor}>
-                    {label}
-                  </span>
-                  {hasKey ? (
-                    <span fg={C.green}>{" ●"}</span>
-                  ) : (
-                    <span fg={C.dim}>{" ○ no key"}</span>
-                  )}
-                </text>
-              </box>
-            );
-          })}
+          {/* Native OpenTUI scrollbox. Same focused=false pattern as the rules
+              table — cursor navigation owned by App.tsx, scroll synced via the
+              chainCursor effect above. */}
+          <scrollbox
+            ref={chainScrollRef}
+            scrollX={false}
+            scrollY={true}
+            focused={false}
+            style={{ flexGrow: 1 }}
+          >
+            {CHAIN_PROVIDERS.map((prov, idx) => {
+              const isCursor = idx === chainCursor;
+              const isOn = chainSelected.has(prov.name);
+              const pos = isOn ? chainOrder.indexOf(prov.name) + 1 : 0;
+              const hasKey = !!(
+                config.apiKeys?.[prov.apiKeyEnvVar] || process.env[prov.apiKeyEnvVar]
+              );
+              const label = prov.displayName.padEnd(18).substring(0, 18);
+              return (
+                <box key={prov.name} height={1} backgroundColor={isCursor ? C.bgHighlight : C.bg}>
+                  <text>
+                    {isOn ? (
+                      <span fg={C.green} bold>{` [${pos}] `}</span>
+                    ) : (
+                      <span fg={C.dim}>{" [ ] "}</span>
+                    )}
+                    <span fg={isCursor ? C.white : hasKey ? C.fgMuted : C.dim} bold={isCursor}>
+                      {label}
+                    </span>
+                    {hasKey ? (
+                      <span fg={C.green}>{" ●"}</span>
+                    ) : (
+                      <span fg={C.dim}>{" ○ no key"}</span>
+                    )}
+                  </text>
+                </box>
+              );
+            })}
+          </scrollbox>
         </box>
       )}
     </box>
