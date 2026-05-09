@@ -50,6 +50,11 @@ interface RoutingContentProps {
   width: number;
   contentH: number;
   isRoutingInput: boolean;
+  /** When the picker is open as part of `e` on an existing rule, this is
+   *  the rule's current scope ("global" or "project"). Used to label that
+   *  option as "(current)" so the user can move scopes deliberately. Null
+   *  when adding a new rule or overriding a default (no current scope). */
+  editingExistingScope: "global" | "project" | null;
 }
 
 export function RoutingContent({
@@ -67,6 +72,7 @@ export function RoutingContent({
   width,
   contentH,
   isRoutingInput,
+  editingExistingScope,
 }: RoutingContentProps) {
   // Refs for the two scrolling lists. We auto-scroll the cursor into view via
   // an effect; the scrollbox itself is unfocused so it doesn't capture our
@@ -363,6 +369,22 @@ export function RoutingContent({
         </span>
         <span fg={C.fgMuted}>{"  (a add new · e override selected · d delete user rule)"}</span>
       </text>
+      {/* Scope hint — always shown so the global/project distinction is
+          discoverable even before the user has any project rules. The
+          ▴ marker in the legend stays present too (count may be 0). */}
+      {!isRoutingInput && (
+        <text height={1}>
+          <span fg={C.dim}>{"   Saves to "}</span>
+          <span fg={C.green}>{"global"}</span>
+          <span fg={C.dim}>{" by default; "}</span>
+          <span fg={C.green} bold>{"a"}</span>
+          <span fg={C.dim}>{" / "}</span>
+          <span fg={C.green} bold>{"e"}</span>
+          <span fg={C.dim}>{" prompts for scope ("}</span>
+          <span fg={C.cyan}>{"project"}</span>
+          <span fg={C.dim}>{" = .claudish.json)."}</span>
+        </text>
+      )}
       {!isRoutingInput && mergedRules.length === 0 && (
         <text height={1}>
           <span fg={C.fgMuted}>{" No rules. Press "}</span>
@@ -375,15 +397,10 @@ export function RoutingContent({
       {mergedRules.length > 0 && !isRoutingInput && (
         <>
           <text height={1}>
-            <span fg={C.blue} bold>
-              {"  "}
-            </span>
-            <span fg={C.blue} bold>
-              {"PATTERN         "}
-            </span>
-            <span fg={C.blue} bold>
-              {"CHAIN"}
-            </span>
+            <span fg={C.blue} bold>{"  "}</span>
+            <span fg={C.blue} bold>{"PATTERN         "}</span>
+            <span fg={C.blue} bold>{"SCOPE     "}</span>
+            <span fg={C.blue} bold>{"CHAIN"}</span>
           </text>
           {/* Native OpenTUI scrollbox. Unfocused: cursor navigation stays in
               App.tsx's useKeyboard handler; we sync scroll position via the
@@ -400,9 +417,9 @@ export function RoutingContent({
               const isDefault = rule.kind === "default";
               const isProject = rule.kind === "project";
               // Marker priority: project (▴ cyan) > override (★ yellow) >
-              // user (• green) > default (· dim). Project wins the marker
-              // slot when a row is BOTH project AND override; the inline
-              // annotation below disambiguates.
+              // user (• green) > default (· dim). Each row owns one scope
+              // — no shadowing in the table — so override + project never
+              // collide on the same row.
               let marker: string;
               let markerFg: string;
               if (isDefault) {
@@ -418,23 +435,26 @@ export function RoutingContent({
                 marker = "•";
                 markerFg = C.green;
               }
+              // SCOPE column: explicit text, color-coded.
+              //   default → "—" (dim)
+              //   global  → "global" (green)
+              //   project → "project" (cyan)
+              let scopeText: string;
+              let scopeFg: string;
+              if (isDefault) {
+                scopeText = "—       ";
+                scopeFg = C.dim;
+              } else if (isProject) {
+                scopeText = "project ";
+                scopeFg = C.cyan;
+              } else {
+                scopeText = "global  ";
+                scopeFg = C.green;
+              }
               // Pattern column: white when selected, cyan when user, dim when default.
               const patFg = sel ? C.white : isDefault ? C.fgMuted : C.cyan;
               // Chain column: cyan when selected, fgMuted when user, dim when default.
               const chainFg = sel ? C.cyan : isDefault ? C.dim : C.fgMuted;
-              // Inline scope annotation — only on project rows. Matches the
-              // selective-disclosure principle: visual noise only when a
-              // project rule actually exists.
-              let scopeAnnotation = "";
-              if (isProject) {
-                if (rule.overridesGlobal) {
-                  scopeAnnotation = "  (project, overrides global)";
-                } else if (rule.overridesDefault) {
-                  scopeAnnotation = "  (project, overrides default)";
-                } else {
-                  scopeAnnotation = "  (project)";
-                }
-              }
               return (
                 <box
                   key={`${rule.kind}-${rule.pattern}`}
@@ -443,15 +463,12 @@ export function RoutingContent({
                   backgroundColor={sel ? C.bgHighlight : C.bg}
                 >
                   <text>
-                    <span fg={markerFg} bold={!isDefault}>
-                      {` ${marker} `}
-                    </span>
+                    <span fg={markerFg} bold={!isDefault}>{` ${marker} `}</span>
                     <span fg={patFg} bold={sel}>
                       {rule.pattern.padEnd(16).substring(0, 16)}
                     </span>
-                    <span fg={C.dim}>{"  "}</span>
+                    <span fg={scopeFg}>{scopeText}</span>
                     <span fg={chainFg}>{chainStr(rule.chain)}</span>
-                    {scopeAnnotation && <span fg={C.dim}>{scopeAnnotation}</span>}
                   </text>
                 </box>
               );
@@ -461,8 +478,10 @@ export function RoutingContent({
       )}
 
       {/* Scope picker — mirrors pick_profile_scope (Profiles tab pattern).
-          Renders inline below the rules table when the user is creating a
-          new rule or override and needs to choose global vs project. */}
+          When the picker is opened via `e` on an existing rule, the rule's
+          current scope is labeled "(current)" so picking the same letter
+          confirms-and-edits, while picking the OTHER letter moves the
+          rule to the new scope. */}
       {mode === "pick_routing_scope" && (
         <box flexDirection="column" paddingTop={1}>
           <text height={1}>
@@ -471,17 +490,23 @@ export function RoutingContent({
             <span fg={C.blue} bold>{":"}</span>
           </text>
           <box height={1} flexDirection="row">
-            <box width={16} height={1} backgroundColor={C.bgHighlight} paddingX={1}>
+            <box width={22} height={1} paddingX={1}>
               <text>
                 <span fg={C.green} bold>{"g"}</span>
                 <span fg={C.white}>{" global"}</span>
+                {editingExistingScope === "global" && (
+                  <span fg={C.dim}>{"  (current)"}</span>
+                )}
               </text>
             </box>
             <box width={2} />
-            <box width={36} height={1} paddingX={1}>
+            <box width={42} height={1} paddingX={1}>
               <text>
                 <span fg={C.cyan} bold>{"p"}</span>
                 <span fg={C.fgMuted}>{" project (.claudish.json)"}</span>
+                {editingExistingScope === "project" && (
+                  <span fg={C.dim}>{"  (current)"}</span>
+                )}
               </text>
             </box>
           </box>

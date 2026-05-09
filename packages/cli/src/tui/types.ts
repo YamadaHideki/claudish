@@ -27,22 +27,24 @@ export type Mode =
 export type RoutingScope = "global" | "project";
 
 /**
- * A single row in the merged routing rules table. Each row carries enough
- * information for the render layer to pick the right marker AND for the
- * keyboard handlers to route `e`/`d` to the correct config layer.
+ * A single row in the routing rules table. Rows from all three layers
+ * (built-in defaults, global config, project-local config) are shown
+ * concurrently — no shadowing in the UI. If a pattern exists at multiple
+ * layers, multiple rows render and each is independently editable.
  *
- * `kind` priority for marker rendering: project (▴) > override (★) > user (•)
- * > default (·). The fields `overridesDefault` and `overridesGlobal` capture
- * the shadowing relationship for accurate status messages on `d`.
+ * Marker priority: project (▴ cyan) > override (★ yellow) > user (• green)
+ * > default (· dim). `overridesDefault` is true when a user rule (global
+ * or project) shares an exact pattern key with a built-in default — used
+ * to pick ★ vs • for the marker. The runtime routing engine still applies
+ * precedence (project beats global beats default), but the table reflects
+ * disk state.
  */
 export interface MergedRule {
   kind: "default" | "global" | "project";
   pattern: string;
   chain: string[];
-  /** True when a user rule (global or project) shadows a built-in default. */
+  /** True when a user rule (global or project) shares a key with a built-in default. */
   overridesDefault: boolean;
-  /** True only for project rules that shadow a same-pattern global rule. */
-  overridesGlobal: boolean;
 }
 
 export type ProbeMode = "idle" | "input" | "running" | "done";

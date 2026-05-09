@@ -60,6 +60,12 @@ export function App() {
   // scope is used (edit-in-place semantics, matching Profiles wizard).
   const [routingScope, setRoutingScope] = useState<RoutingScope>("global");
   const [routingScopeReturnsToEdit, setRoutingScopeReturnsToEdit] = useState(false);
+  // When `e` is pressed on an existing user/project rule, these track WHICH
+  // rule we're editing. If the user picks a DIFFERENT scope in the picker,
+  // the save path also deletes the old rule (effectively a move). For new
+  // rules (a) and overrides of defaults (e on default), both are null.
+  const [editingExistingScope, setEditingExistingScope] = useState<RoutingScope | null>(null);
+  const [editingExistingPattern, setEditingExistingPattern] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<TestResultsMap>({});
 
@@ -126,53 +132,37 @@ export function App() {
 
   const statsEnabled = process.env.CLAUDISH_STATS !== "0" && process.env.CLAUDISH_STATS !== "false";
 
-  // Merged routing rules: built-in defaults → global config → project-local
-  // config. Each row tagged with `kind` so the keyboard handlers know which
-  // config layer to write/delete from, and so the render layer can pick the
-  // right marker.
+  // Merged routing rules: built-in defaults + global config + project-local
+  // config rendered as a flat list with NO shadowing. If a pattern exists at
+  // multiple layers (e.g. a global override AND a project rule for `gpt-*`),
+  // BOTH rows are visible — the user can edit/delete each independently.
+  //
+  // The runtime routing engine (loadRoutingRules + matchRoutingRule) still
+  // applies precedence (project beats global beats default), but the TUI
+  // shows the data as it exists on disk, not the runtime resolution.
   //
   // Catch-all `*` is rendered separately above the table and excluded here.
   //
-  // Shadowing semantics: project shadows global shadows default by exact
-  // pattern key (no glob-vs-glob interleaving). When a pattern exists in
-  // multiple layers, only the topmost shows in the table — `d` peels it,
-  // then a re-render reveals the next layer.
-  //
+  // Sort order: defaults first (alphabetical), then global, then project.
   // `loadLocalConfig()` is called inside the memo so a `refreshConfig()`
-  // after a project save (which re-reads the on-disk config) triggers
-  // re-derivation. The dep on the global config object covers the rest.
+  // after a project save triggers re-derivation.
   const mergedRules: MergedRule[] = useMemo(() => {
     const out: MergedRule[] = [];
     const localCfg = loadLocalConfig();
-    const globalUserPatterns = new Set(Object.keys(config.routing ?? {}));
-    const projectPatterns = new Set(localCfg ? Object.keys(localCfg.routing ?? {}) : []);
 
-    // Layer 1 — built-in defaults: only those NOT shadowed by global or project
     for (const [pat, chain] of Object.entries(DEFAULT_ROUTING_RULES)) {
       if (pat === "*") continue;
-      if (globalUserPatterns.has(pat)) continue;
-      if (projectPatterns.has(pat)) continue;
-      out.push({
-        kind: "default",
-        pattern: pat,
-        chain,
-        overridesDefault: false,
-        overridesGlobal: false,
-      });
+      out.push({ kind: "default", pattern: pat, chain, overridesDefault: false });
     }
-    // Layer 2 — global user rules: only those NOT shadowed by project
     for (const [pat, chain] of Object.entries(config.routing ?? {})) {
       if (pat === "*") continue;
-      if (projectPatterns.has(pat)) continue;
       out.push({
         kind: "global",
         pattern: pat,
         chain,
         overridesDefault: pat in DEFAULT_ROUTING_RULES,
-        overridesGlobal: false,
       });
     }
-    // Layer 3 — project rules: always shown (highest priority)
     if (localCfg?.routing) {
       for (const [pat, chain] of Object.entries(localCfg.routing)) {
         if (pat === "*") continue;
@@ -181,13 +171,10 @@ export function App() {
           pattern: pat,
           chain,
           overridesDefault: pat in DEFAULT_ROUTING_RULES,
-          overridesGlobal: globalUserPatterns.has(pat),
         });
       }
     }
     return out;
-    // Memo dep includes config.routing AND a serialized snapshot of the
-    // local routing so a save-then-refresh cycle re-derives correctly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.routing, JSON.stringify(loadLocalConfig()?.routing ?? {})]);
   const profileName = config.defaultProfile || "default";
@@ -310,6 +297,8 @@ export function App() {
         setChainSelected(new Set());
         setChainOrder([]);
         setRoutingScopeReturnsToEdit(false);
+        setEditingExistingScope(null);
+        setEditingExistingPattern(null);
         setMode("browse");
       }
       return;
@@ -352,6 +341,15 @@ export function App() {
       } else if (key.name === "return" || key.name === "enter") {
         const pat = routingPattern.trim();
         if (pat && chainOrder.length) {
+          // Move detection: if `e` was used on an existing rule AND the user
+          // picked a different scope in the picker, write to the new scope
+          // and delete from the old one. Otherwise this is a plain update
+          // or a fresh add — just write.
+          const isMove =
+            editingExistingScope !== null &&
+            editingExistingScope !== routingScope &&
+            editingExistingPattern === pat;
+
           if (routingScope === "project") {
             const local = loadLocalConfig() ?? {
               version: "1.0.0",
@@ -361,13 +359,30 @@ export function App() {
             if (!local.routing) local.routing = {};
             local.routing[pat] = chainOrder;
             saveLocalConfig(local);
-            setStatusMsg(`Project rule added: ${pat} → ${chainOrder.join(", ")}`);
           } else {
             const cfg = loadConfig();
             if (!cfg.routing) cfg.routing = {};
             cfg.routing[pat] = chainOrder;
             saveConfig(cfg);
-            setStatusMsg(`Rule added: ${pat} → ${chainOrder.join(", ")}`);
+          }
+          if (isMove && editingExistingScope === "global") {
+            const cfg = loadConfig();
+            if (cfg.routing && cfg.routing[pat] !== undefined) {
+              delete cfg.routing[pat];
+              saveConfig(cfg);
+            }
+            setStatusMsg(`Rule moved global → project: ${pat}`);
+          } else if (isMove && editingExistingScope === "project") {
+            const local = loadLocalConfig();
+            if (local?.routing && local.routing[pat] !== undefined) {
+              delete local.routing[pat];
+              saveLocalConfig(local);
+            }
+            setStatusMsg(`Rule moved project → global: ${pat}`);
+          } else if (routingScope === "project") {
+            setStatusMsg(`Project rule saved: ${pat} → ${chainOrder.join(", ")}`);
+          } else {
+            setStatusMsg(`Global rule saved: ${pat} → ${chainOrder.join(", ")}`);
           }
           refreshConfig();
         }
@@ -379,12 +394,26 @@ export function App() {
         // Reset scope state for the next add cycle.
         setRoutingScope("global");
         setRoutingScopeReturnsToEdit(false);
+        setEditingExistingScope(null);
+        setEditingExistingPattern(null);
         setMode("browse");
       } else if (key.name === "escape") {
         setChainSelected(new Set());
         setChainOrder([]);
         setChainCursor(0);
-        setMode("add_routing_pattern");
+        // If we entered the chain builder via `e` on an existing rule, the
+        // pattern is fixed — go straight to browse. For fresh adds, fall
+        // back to pattern input so the user can fix the pattern.
+        if (routingScopeReturnsToEdit) {
+          setRoutingPattern("");
+          setRoutingScope("global");
+          setRoutingScopeReturnsToEdit(false);
+          setEditingExistingScope(null);
+          setEditingExistingPattern(null);
+          setMode("browse");
+        } else {
+          setMode("add_routing_pattern");
+        }
       }
       return;
     }
@@ -613,16 +642,14 @@ export function App() {
         setStatusMsg(null);
         setMode("add_routing_pattern");
       } else if (key.name === "e") {
-        // Edit selected rule. Prefill the chain builder from the existing
-        // chain so the user sees what they're modifying.
+        // Edit selected rule. ALWAYS opens the scope picker so the user can
+        // either confirm the current scope (and proceed to chain edit) or
+        // move the rule to the other scope (effectively a single-keystroke
+        // promote/demote). The picker is prefilled with the rule's current
+        // scope as the suggested choice.
         //
-        // Scope semantics (matches Profiles wizard, edit-in-place):
-        //   - on a `default` row: opens scope picker — creating a new
-        //     override means picking which scope it lives in.
-        //   - on a `global` row: skip picker, save back to global.
-        //   - on a `project` row: skip picker, save back to project.
-        // To move a rule between scopes, user does `d` then `a` at the new
-        // scope (2-keystroke flow; promote/demote deferred to a follow-up).
+        // For `default` rows, there's no current scope — the picker just
+        // asks the user to choose where to write the new override.
         if (mergedRules.length === 0) {
           setStatusMsg("No rules to edit.");
         } else {
@@ -633,21 +660,16 @@ export function App() {
           setChainOrder([...rule.chain]);
           setChainCursor(0);
           setStatusMsg(null);
-          if (rule.kind === "default") {
-            // Creating a new override — must pick scope.
-            setRoutingScopeReturnsToEdit(true);
-            setMode("pick_routing_scope");
-          } else {
-            // Editing existing user rule — inherit its scope, skip picker.
-            setRoutingScope(rule.kind === "project" ? "project" : "global");
-            setRoutingScopeReturnsToEdit(true);
-            setMode("add_routing_chain");
-          }
+          // Default scope to the rule's current scope (or "global" for defaults
+          // — matches the typical case where users write personal overrides).
+          setRoutingScope(rule.kind === "project" ? "project" : "global");
+          setEditingExistingScope(rule.kind === "default" ? null : rule.kind);
+          setEditingExistingPattern(rule.pattern);
+          setRoutingScopeReturnsToEdit(true);
+          setMode("pick_routing_scope");
         }
       } else if (key.name === "d") {
-        // 3-layer peel: project shadows global shadows default. `d` removes
-        // exactly the topmost layer the cursor is on. Status messages
-        // explain which layer was removed and what now resurfaces.
+        // No more peel: each row owns its scope. Delete from that scope only.
         if (mergedRules.length === 0) {
           setStatusMsg("No rules to delete.");
         } else {
@@ -663,17 +685,7 @@ export function App() {
               delete local.routing[rule.pattern];
               saveLocalConfig(local);
               refreshConfig();
-              if (rule.overridesGlobal) {
-                setStatusMsg(
-                  `Project rule for '${rule.pattern}' deleted; global rule now active.`
-                );
-              } else if (rule.overridesDefault) {
-                setStatusMsg(
-                  `Project rule for '${rule.pattern}' deleted; reverted to built-in default.`
-                );
-              } else {
-                setStatusMsg(`Project rule deleted: '${rule.pattern}'.`);
-              }
+              setStatusMsg(`Project rule deleted: '${rule.pattern}'.`);
             }
           } else {
             // rule.kind === "global"
@@ -682,13 +694,7 @@ export function App() {
               delete cfg.routing[rule.pattern];
               saveConfig(cfg);
               refreshConfig();
-              if (rule.overridesDefault) {
-                setStatusMsg(
-                  `Custom override for '${rule.pattern}' deleted; reverted to built-in default.`
-                );
-              } else {
-                setStatusMsg(`Rule deleted: '${rule.pattern}'.`);
-              }
+              setStatusMsg(`Global rule deleted: '${rule.pattern}'.`);
             }
           }
         }
@@ -851,6 +857,7 @@ export function App() {
             width={width}
             contentH={contentH}
             isRoutingInput={isRoutingInput}
+            editingExistingScope={editingExistingScope}
           />
           <RoutingDetail probeMode={probeMode} mergedRules={mergedRules} />
         </>

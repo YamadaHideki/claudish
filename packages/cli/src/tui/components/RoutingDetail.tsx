@@ -18,13 +18,11 @@ export function RoutingDetail({ probeMode, mergedRules }: RoutingDetailProps) {
   const defaults = mergedRules.filter((r) => r.kind === "default").length;
   const globalRules = mergedRules.filter((r) => r.kind === "global");
   const projectRules = mergedRules.filter((r) => r.kind === "project");
-  const projectCount = projectRules.length;
-  // "overrides" counts user customizations that shadow a built-in default.
-  // Both global and project rules can override defaults.
-  const overrides =
-    globalRules.filter((r) => r.overridesDefault).length +
-    projectRules.filter((r) => r.overridesDefault).length;
-  const userOnly = globalRules.length + projectRules.length - overrides;
+  // Among global rules, how many override a built-in default? (Project rules
+  // get the ▴ marker regardless, so their override status doesn't change
+  // the count.)
+  const globalOverrides = globalRules.filter((r) => r.overridesDefault).length;
+  const globalCustom = globalRules.length - globalOverrides;
 
   return (
     <box
@@ -38,49 +36,34 @@ export function RoutingDetail({ probeMode, mergedRules }: RoutingDetailProps) {
       paddingX={1}
     >
       <text>
-        <span fg={C.dim} bold>
-          {" · "}
-        </span>
-        <span fg={C.fgMuted}>
-          {"built-in default · "}
-        </span>
-        <span fg={C.green} bold>
-          {"•"}
-        </span>
-        <span fg={C.fgMuted}>{" custom rule · "}</span>
-        <span fg={C.yellow} bold>
-          {"★"}
-        </span>
-        <span fg={C.fgMuted}>{" custom override of a built-in default"}</span>
-        {projectCount > 0 && (
-          <>
-            <span fg={C.fgMuted}>{" · "}</span>
-            <span fg={C.cyan} bold>{"▴"}</span>
-            <span fg={C.fgMuted}>{" project rule (.claudish.json)"}</span>
-          </>
-        )}
+        <span fg={C.dim} bold>{" · "}</span>
+        <span fg={C.fgMuted}>{"default · "}</span>
+        <span fg={C.green} bold>{"•"}</span>
+        <span fg={C.fgMuted}>{" custom global · "}</span>
+        <span fg={C.yellow} bold>{"★"}</span>
+        <span fg={C.fgMuted}>{" global override of default · "}</span>
+        <span fg={C.cyan} bold>{"▴"}</span>
+        <span fg={C.fgMuted}>{" project (.claudish.json)"}</span>
       </text>
       <text>
-        <span fg={C.fgMuted}>{"  Chains tried left to right; built-in defaults can be overridden via "}</span>
+        <span fg={C.fgMuted}>{"  Each row owns its scope: "}</span>
+        <span fg={C.green} bold>{"d"}</span>
+        <span fg={C.fgMuted}>{" deletes from that scope; "}</span>
         <span fg={C.green} bold>{"e"}</span>
-        <span fg={C.fgMuted}>{"."}</span>
+        <span fg={C.fgMuted}>{" can move scope. Project beats global beats default at runtime."}</span>
       </text>
       <text>
         <span fg={C.cyan} bold>{`  ${defaults}`}</span>
-        <span fg={C.fgMuted}>{" built-in"}</span>
+        <span fg={C.fgMuted}>{" default"}</span>
         <span fg={C.dim}>{"  ·  "}</span>
-        <span fg={C.cyan} bold>{`${userOnly}`}</span>
-        <span fg={C.fgMuted}>{" custom"}</span>
+        <span fg={C.green} bold>{`${globalCustom}`}</span>
+        <span fg={C.fgMuted}>{" global custom"}</span>
         <span fg={C.dim}>{"  ·  "}</span>
-        <span fg={C.yellow} bold>{`${overrides}`}</span>
-        <span fg={C.fgMuted}>{" override" + (overrides === 1 ? "" : "s")}</span>
-        {projectCount > 0 && (
-          <>
-            <span fg={C.dim}>{"  ·  "}</span>
-            <span fg={C.cyan} bold>{`${projectCount}`}</span>
-            <span fg={C.fgMuted}>{" project"}</span>
-          </>
-        )}
+        <span fg={C.yellow} bold>{`${globalOverrides}`}</span>
+        <span fg={C.fgMuted}>{" override" + (globalOverrides === 1 ? "" : "s")}</span>
+        <span fg={C.dim}>{"  ·  "}</span>
+        <span fg={C.cyan} bold>{`${projectRules.length}`}</span>
+        <span fg={C.fgMuted}>{" project"}</span>
       </text>
     </box>
   );
