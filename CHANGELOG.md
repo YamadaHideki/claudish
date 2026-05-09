@@ -2,6 +2,14 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.1.2] - 2026-05-09
+
+### Bug Fixes
+
+- gate sync resolver on `isFreshEnough` TTL (#120) *(model-loader)* ([`067f27d`](https://github.com/MadAppGang/claudish/commit/067f27d))
+
+  Adds the missing TTL check to `getRecommendedModelsSync`'s disk-cache branch so it matches the async path's freshness semantics. Closes the structural footgun behind the v7.1.1 user-visible fix: `loadModelInfo` and `getAvailableModels` (sync callers feeding `--model` flag help) no longer silently serve months-old cached data.
+
 ## [7.1.1] - 2026-05-09
 
 ### Documentation
