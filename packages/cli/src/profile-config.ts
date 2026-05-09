@@ -11,7 +11,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, parse } from "node:path";
 
 // Config directory and file paths
 const CONFIG_DIR = join(homedir(), ".claudish");
@@ -252,9 +252,39 @@ export function getConfigPath(): string {
 // ─── Local Config ────────────────────────────────────────
 
 /**
- * Get path to local config file (.claudish.json in CWD)
+ * Get path to local config file (.claudish.json).
+ *
+ * Walks up from cwd to find an existing .claudish.json so users can run
+ * `claudish` from any subdirectory of their project. Walk-up stops at:
+ *   - $HOME (don't escape into the user's home dir)
+ *   - The git repo root (presence of `.git`) — bounds project scope
+ *   - The filesystem root
+ *
+ * If no .claudish.json is found in the walk-up chain, returns the path at
+ * cwd so first-time saves create the file at the user's working directory
+ * (preserves prior "create at cwd" semantics for fresh projects).
+ *
+ * Behavior change vs. v7.x: previously cwd-only. This unifies how every
+ * local-config consumer (Profiles, Routing, custom endpoints) discovers
+ * the project file. Documented in app-tsx-split PR.
  */
 export function getLocalConfigPath(): string {
+  const home = homedir();
+  let dir = process.cwd();
+  const root = parse(dir).root;
+
+  while (dir !== root && dir !== home) {
+    const candidate = join(dir, LOCAL_CONFIG_FILENAME);
+    if (existsSync(candidate)) return candidate;
+    if (existsSync(join(dir, ".git"))) {
+      // At git root; if .claudish.json doesn't exist here, stop walking and
+      // return this path so first-time saves create the file at the git root
+      // (the natural project boundary), not at cwd or somewhere above the repo.
+      return candidate;
+    }
+    dir = dirname(dir);
+  }
+  // No project boundary found — fall back to cwd.
   return join(process.cwd(), LOCAL_CONFIG_FILENAME);
 }
 
