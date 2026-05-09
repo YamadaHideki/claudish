@@ -187,7 +187,6 @@ async function geminiQuotaHandler(): Promise<void> {
     // provider=google (RecommendedModelEntry lacks `availableInPlans`; that
     // field is on ModelDoc — see §6.E in architecture.md). Dedupe IDs because
     // a single model can appear in multiple categories (vision + subscription).
-    const geminiFallback = process.env.CLAUDISH_GEMINI_HELP_FALLBACK ?? "gemini-2.5-flash";
     let geminiExamples: string[];
     try {
       const recs = await getRecommendedModels();
@@ -198,10 +197,10 @@ async function geminiQuotaHandler(): Promise<void> {
         .slice(0, 2)
         .map((e) => e.id);
       if (geminiExamples.length === 0) {
-        geminiExamples = [geminiFallback];
+        geminiExamples = ["gemini-3.1-pro-preview"];
       }
     } catch {
-      geminiExamples = [geminiFallback];
+      geminiExamples = ["gemini-3.1-pro-preview"];
     }
     console.log(`  ${B}${CYN}Usage${R}`);
     for (const ex of geminiExamples) {
