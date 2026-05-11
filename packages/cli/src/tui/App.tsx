@@ -561,6 +561,40 @@ export function App() {
         } else {
           setStatusMsg("No stored key to remove.");
         }
+      } else if (key.raw === "T") {
+        // Test ALL credentialed providers in parallel. Each provider's
+        // testProviderKey runs concurrently; results stream into testResults
+        // as they arrive (badge flips from "testing" → "valid"/"failed").
+        // Providers without a key are marked failed immediately so the user
+        // sees the full picture in one pass.
+        const fired: string[] = [];
+        for (const prov of PROVIDERS) {
+          const apiKey = config.apiKeys?.[prov.apiKeyEnvVar] || process.env[prov.apiKeyEnvVar];
+          if (!apiKey) {
+            setTestResults((prev) => ({
+              ...prev,
+              [prov.name]: { status: "failed", error: "No key configured" },
+            }));
+            continue;
+          }
+          fired.push(prov.displayName);
+          const provName = prov.name;
+          setTestResults((prev) => ({ ...prev, [provName]: { status: "testing" } }));
+          const startMs = Date.now();
+          testProviderKey(provName, apiKey).then((result) => {
+            const ms = Date.now() - startMs;
+            const ok = result === "valid";
+            setTestResults((prev) => ({
+              ...prev,
+              [provName]: ok ? { status: "valid", ms } : { status: "failed", error: result, ms },
+            }));
+          });
+        }
+        setStatusMsg(
+          fired.length === 0
+            ? "No credentialed providers to test."
+            : `Testing ${fired.length} provider${fired.length === 1 ? "" : "s"} in parallel…`
+        );
       } else if (key.name === "t") {
         const apiKey =
           config.apiKeys?.[selectedProvider.apiKeyEnvVar] ||
