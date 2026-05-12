@@ -952,7 +952,23 @@ export function App() {
       )}
 
       {/* Footer */}
-      <Footer activeTab={activeTab} mode={mode} probeMode={probeMode} />
+      <Footer
+        activeTab={activeTab}
+        mode={mode}
+        probeMode={probeMode}
+        // Per-row capabilities so the Providers tab footer hides chips
+        // (s set key / l login / e endpoint / x remove) on rows that
+        // don't support the corresponding method.
+        providerCaps={
+          activeTab === "providers" && selectedProvider
+            ? {
+                apiKey: !!selectedProvider.apiKeyEnvVar,
+                oauth: !!selectedProvider.oauthSlug,
+                endpoint: !!selectedProvider.endpointEnvVar,
+              }
+            : undefined
+        }
+      />
     </box>
   );
 }

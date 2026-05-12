@@ -93,6 +93,40 @@ export function providerIsReady(
   return providerAuthSource(p, config) !== null;
 }
 
+/**
+ * Per-provider auth capabilities, surfaced as a pair of (supported, set)
+ * flags for the two methods. The AUTH column renders this pair as
+ * `key ●/○` + `oauth ●/○`, with empty slot when not supported.
+ *
+ * Capability is intrinsic to the provider:
+ *   - apiKey supported iff catalog declares apiKeyEnvVar
+ *   - oauth  supported iff catalog declares oauthLoginSlug
+ *
+ * "Set" means a credential of that kind is present right now:
+ *   - apiKey set: env var OR config.apiKeys has a value
+ *   - oauth set:  hasOAuthCredentials(catalogName) returns true
+ */
+export interface AuthCapabilities {
+  apiKey: { supported: boolean; set: boolean };
+  oauth: { supported: boolean; set: boolean };
+}
+
+export function providerAuthCapabilities(
+  p: ProviderDef,
+  config: { apiKeys?: Record<string, string> },
+): AuthCapabilities {
+  const apiKeySupported = !!p.apiKeyEnvVar;
+  const apiKeySet =
+    apiKeySupported &&
+    (!!process.env[p.apiKeyEnvVar] || !!config.apiKeys?.[p.apiKeyEnvVar]);
+  const oauthSupported = !!p.oauthSlug;
+  const oauthSet = oauthSupported && hasOAuthCredentials(p.catalogName);
+  return {
+    apiKey: { supported: apiKeySupported, set: apiKeySet },
+    oauth: { supported: oauthSupported, set: oauthSet },
+  };
+}
+
 export const PROVIDERS: ProviderDef[] = getAllProviders()
   .filter((d) => !SKIP.has(d.name))
   .map(toProviderDef);

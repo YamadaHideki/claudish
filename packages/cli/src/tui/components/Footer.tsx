@@ -7,9 +7,20 @@ interface FooterProps {
   activeTab: Tab;
   mode: Mode;
   probeMode: ProbeMode;
+  /**
+   * When on the Providers tab in browse mode, the cursor row's auth
+   * capabilities. Used to hide `s set key` / `l login` chips on rows
+   * that don't support the corresponding method. Omitting either field
+   * means "show that chip" (back-compat).
+   */
+  providerCaps?: {
+    apiKey: boolean;
+    oauth: boolean;
+    endpoint: boolean;
+  };
 }
 
-export function Footer({ activeTab, mode, probeMode }: FooterProps) {
+export function Footer({ activeTab, mode, probeMode, providerCaps }: FooterProps) {
   // Recompute isProfileEditMode from the `mode` prop — pure on `mode`, kept
   // self-contained so the parent doesn't have to pass a derived bool.
   const isProfileEditMode =
@@ -40,20 +51,25 @@ export function Footer({ activeTab, mode, probeMode }: FooterProps) {
       [C.dim, "q", "quit"],
     ];
   } else if (activeTab === "providers") {
-    // Order roughly by frequency: navigate first, key/endpoint/login next
-    // (setup actions), then test, then destructive. `Tab section` is omitted
-    // here to keep the row under 80 cols once `l login` was added — Tab is
-    // a universal navigation key, users will discover it on other tabs.
-    keys = [
-      [C.blue, "↑↓", "navigate"],
-      [C.green, "s", "set key"],
-      [C.green, "e", "endpoint"],
-      [C.green, "l", "login"],
-      [C.cyan, "t", "test"],
-      [C.cyan, "T", "test all"],
-      [C.red, "x", "remove"],
-      [C.dim, "q", "quit"],
-    ];
+    // Hotkey row is computed per-cursor-row: chips that don't apply to the
+    // selected provider are hidden. e.g. Gemini Code Assist has no API-key
+    // path so `s set key` and `e endpoint` are omitted; bare Gemini has no
+    // OAuth path so `l login` is omitted.
+    //
+    // When providerCaps is omitted (e.g. legacy callers, empty list), all
+    // chips are shown — back-compat.
+    const showKey = providerCaps ? providerCaps.apiKey : true;
+    const showEndpoint = providerCaps ? providerCaps.endpoint : true;
+    const showLogin = providerCaps ? providerCaps.oauth : true;
+    const showRemove = providerCaps ? providerCaps.apiKey : true;
+    keys = [[C.blue, "↑↓", "navigate"]];
+    if (showKey) keys.push([C.green, "s", "set key"]);
+    if (showEndpoint) keys.push([C.green, "e", "endpoint"]);
+    if (showLogin) keys.push([C.green, "l", "login"]);
+    keys.push([C.cyan, "t", "test"]);
+    keys.push([C.cyan, "T", "test all"]);
+    if (showRemove) keys.push([C.red, "x", "remove"]);
+    keys.push([C.dim, "q", "quit"]);
   } else if (activeTab === "profiles" && mode === "pick_profile_scope") {
     keys = [
       [C.green, "g", "global"],

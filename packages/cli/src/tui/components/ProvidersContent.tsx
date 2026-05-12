@@ -1,6 +1,11 @@
 /** @jsxImportSource @opentui/react */
 import { C } from "../theme.js";
-import { ProviderDef, maskKey, providerAuthSource } from "../providers.js";
+import {
+  ProviderDef,
+  maskKey,
+  providerAuthCapabilities,
+  providerAuthSource,
+} from "../providers.js";
 import type { TestResultsMap } from "../types.js";
 import type { ClaudishProfileConfig } from "../../profile-config.js";
 
@@ -16,9 +21,9 @@ interface ProvidersContentProps {
 
 // Column widths — kept here so headers and rows stay in lockstep.
 const COL_NAME = 14;
-const COL_STATUS = 9; // "ready Xms" / "testing" / "not set" / "FAIL"
-const COL_AUTH = 6;   // "env" / "cfg" / "e+c" / "oauth" / "—"
-const COL_KEY = 10;   // 8-char mask + a little breathing room
+const COL_STATUS = 9;  // "ready Xms" / "testing" / "not set" / "FAIL"
+const COL_AUTH = 16;   // "key ● oauth ●" — capability slots
+const COL_KEY = 10;    // 8-char mask + a little breathing room
 
 function pad(s: string, n: number): string {
   return s.length >= n ? s.substring(0, n) : s + " ".repeat(n - s.length);
@@ -38,6 +43,7 @@ export function ProvidersContent({
 
   const getRow = (p: ProviderDef, idx: number) => {
     const auth = providerAuthSource(p, config);
+    const caps = providerAuthCapabilities(p, config);
     const isReady = auth !== null;
     const isOauthOnly = auth === "oauth";
     const selected = idx === providerIndex;
@@ -56,10 +62,6 @@ export function ProvidersContent({
     } else {
       keyDisplay = "────────";
     }
-
-    // AUTH column source label.
-    const authLabel = auth ?? "—";
-    const authFg = !auth ? C.dim : auth === "oauth" ? C.cyan : C.green;
 
     const isFirstUnready = !isReady && !separatorRendered;
     if (isFirstUnready) separatorRendered = true;
@@ -81,13 +83,16 @@ export function ProvidersContent({
       }
     }
 
-    // Description: for OAuth-only providers without credentials, replace
-    // the catalog description with an actionable hint so the user sees
-    // the path forward.
-    const description =
-      !isReady && p.oauthSlug
-        ? `Press l to login (claudish login ${p.oauthSlug})`
-        : p.description;
+    // AUTH column — two capability slots, side by side.
+    //   ● = configured/set
+    //   ○ = supported, not yet configured
+    //  (space) = not supported by this provider
+    //
+    // Label "key" is green (API-key family), "oauth" is cyan (OAuth path).
+    // When not supported, both label and glyph are blank-padded so columns
+    // align between rows with different capability sets.
+    const keySlot = caps.apiKey;
+    const oauthSlot = caps.oauth;
 
     return (
       <box key={p.name} flexDirection="column">
@@ -115,13 +120,30 @@ export function ProvidersContent({
               {pad(statusText, COL_STATUS)}
             </span>
             <span fg={C.dim}>{"  "}</span>
-            <span fg={authFg}>{pad(authLabel, COL_AUTH)}</span>
+            {/* AUTH column: two capability slots. 16-char fixed width. */}
+            {keySlot.supported ? (
+              <>
+                <span fg={C.green}>{"key "}</span>
+                <span fg={keySlot.set ? C.green : C.dim}>{keySlot.set ? "●" : "○"}</span>
+              </>
+            ) : (
+              <span>{"     "}</span>
+            )}
+            <span>{" "}</span>
+            {oauthSlot.supported ? (
+              <>
+                <span fg={C.cyan}>{"oauth "}</span>
+                <span fg={oauthSlot.set ? C.cyan : C.dim}>{oauthSlot.set ? "●" : "○"}</span>
+              </>
+            ) : (
+              <span>{"       "}</span>
+            )}
             <span fg={C.dim}>{"  "}</span>
             <span fg={isOauthOnly ? C.cyan : isReady ? C.cyan : C.dim}>
               {pad(keyDisplay, COL_KEY)}
             </span>
             <span fg={C.dim}>{"  "}</span>
-            <span fg={selected ? C.white : C.dim}>{description}</span>
+            <span fg={selected ? C.white : C.dim}>{p.description}</span>
           </text>
         </box>
       </box>
@@ -138,7 +160,10 @@ export function ProvidersContent({
       flexDirection="column"
       paddingX={1}
     >
-      {/* Column header — widths match COL_* constants used by getRow. */}
+      {/* Column header — widths match COL_* constants used by getRow.
+          AUTH column shows per-row "key ● oauth ●" capability slots.
+          Glyph legend: ● = set, ○ = supported but not set, blank = not
+          supported. */}
       <text>
         <span fg={C.dim}>{"   "}</span>
         <span fg={C.blue} bold>{pad("PROVIDER", COL_NAME)}</span>
