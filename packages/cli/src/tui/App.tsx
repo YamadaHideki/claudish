@@ -616,17 +616,29 @@ export function App() {
             : `Testing ${fired.length} provider${fired.length === 1 ? "" : "s"} in parallel…`
         );
       } else if (key.name === "t") {
+        // Single-provider test. No-op if there's nothing to test against —
+        // we don't want to flip the badge to FAIL just because no key is
+        // set. Use the appropriate hint based on provider capabilities.
         const apiKey =
           config.apiKeys?.[selectedProvider.apiKeyEnvVar] ||
           process.env[selectedProvider.apiKeyEnvVar];
-        const provName = selectedProvider.name;
         if (!apiKey) {
-          setTestResults((prev) => ({
-            ...prev,
-            [provName]: { status: "failed", error: "No key configured" },
-          }));
+          if (selectedProvider.oauthSlug) {
+            setStatusMsg(
+              `${selectedProvider.displayName}: no key set. Press s to set a key or l to login.`
+            );
+          } else if (selectedProvider.apiKeyEnvVar) {
+            setStatusMsg(
+              `${selectedProvider.displayName}: no key set. Press s to set an API key.`
+            );
+          } else {
+            setStatusMsg(
+              `${selectedProvider.displayName} doesn't support API-key auth.`
+            );
+          }
           return;
         }
+        const provName = selectedProvider.name;
         setTestResults((prev) => ({ ...prev, [provName]: { status: "testing" } }));
         const startMs = Date.now();
         testProviderKey(provName, apiKey).then((result) => {
