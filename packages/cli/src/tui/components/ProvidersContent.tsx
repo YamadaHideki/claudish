@@ -22,7 +22,13 @@ interface ProvidersContentProps {
 // Column widths — kept here so headers and rows stay in lockstep.
 const COL_NAME = 14;
 const COL_STATUS = 9;  // "ready Xms" / "testing" / "not set" / "FAIL"
-const COL_AUTH = 16;   // "key ● oauth ●" — capability slots
+// AUTH column shows two pill-shaped tags side by side: `key` and `oauth`.
+// When set, the tag has a background color (green for key, cyan for oauth)
+// and white text. When supported but unset, plain dim text. When not
+// supported, blank space the same width so columns line up across rows.
+const PILL_KEY_W = 5;    // " key " (1 pad + 3 chars + 1 pad)
+const PILL_OAUTH_W = 7;  // " oauth " (1 pad + 5 chars + 1 pad)
+const COL_AUTH = PILL_KEY_W + 1 + PILL_OAUTH_W; // 13 chars total with 1 separator
 const COL_KEY = 10;    // 8-char mask + a little breathing room
 
 function pad(s: string, n: number): string {
@@ -120,23 +126,30 @@ export function ProvidersContent({
               {pad(statusText, COL_STATUS)}
             </span>
             <span fg={C.dim}>{"  "}</span>
-            {/* AUTH column: two capability slots. 16-char fixed width. */}
+            {/* AUTH column: two pill tags side by side.
+                · Set    → bg color + white text (lowercase, pill-style)
+                · Unset  → dim gray text on default bg
+                · Absent → spaces, same width, keeps columns aligned */}
             {keySlot.supported ? (
-              <>
-                <span fg={C.green}>{"key "}</span>
-                <span fg={keySlot.set ? C.green : C.dim}>{keySlot.set ? "●" : "○"}</span>
-              </>
+              <span
+                fg={keySlot.set ? C.white : C.dim}
+                bg={keySlot.set ? C.green : undefined}
+              >
+                {" key "}
+              </span>
             ) : (
-              <span>{"     "}</span>
+              <span>{" ".repeat(PILL_KEY_W)}</span>
             )}
             <span>{" "}</span>
             {oauthSlot.supported ? (
-              <>
-                <span fg={C.cyan}>{"oauth "}</span>
-                <span fg={oauthSlot.set ? C.cyan : C.dim}>{oauthSlot.set ? "●" : "○"}</span>
-              </>
+              <span
+                fg={oauthSlot.set ? C.white : C.dim}
+                bg={oauthSlot.set ? C.cyan : undefined}
+              >
+                {" oauth "}
+              </span>
             ) : (
-              <span>{"       "}</span>
+              <span>{" ".repeat(PILL_OAUTH_W)}</span>
             )}
             <span fg={C.dim}>{"  "}</span>
             <span fg={isOauthOnly ? C.cyan : isReady ? C.cyan : C.dim}>
