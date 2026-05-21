@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-import { C } from "../theme.js";
+import { A, C } from "../theme.js";
 import { TABS_H } from "../constants.js";
 import type { Tab } from "../types.js";
 
@@ -38,7 +38,7 @@ export function TabBar({ activeTab, statusMsg, width }: TabBarProps) {
                 paddingX={1}
               >
                 <text>
-                  <span fg={active ? C.tabActiveFg : C.tabInactiveFg} bold>
+                  <span fg={active ? C.tabActiveFg : C.tabInactiveFg} attributes={A.bold}>
                     {`${t.num}. ${t.label}`}
                   </span>
                 </text>
@@ -75,7 +75,7 @@ export function TabBar({ activeTab, statusMsg, width }: TabBarProps) {
                   ? C.green
                   : C.yellow
               }
-              bold
+              attributes={A.bold}
             >
               {statusText}
             </span>

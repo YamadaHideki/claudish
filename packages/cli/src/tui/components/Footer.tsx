@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-import { C } from "../theme.js";
+import { A, C } from "../theme.js";
 import { FOOTER_H } from "../constants.js";
 import type { Mode, ProbeMode, Tab } from "../types.js";
 
@@ -134,7 +134,7 @@ export function Footer({ activeTab, mode, probeMode, providerCaps }: FooterProps
         {keys.map(([color, key, label], i) => (
           <span key={i}>
             {i > 0 && <span fg={C.dim}>{" │ "}</span>}
-            <span fg={color as string} bold>
+            <span fg={color as string} attributes={A.bold}>
               {key}
             </span>
             <span fg={C.fgMuted}> {label}</span>

@@ -23,7 +23,7 @@ import {
   providerIsReady,
   type ProviderDef,
 } from "./providers.js";
-import { C } from "./theme.js";
+import { A, C } from "./theme.js";
 import {
   CHAIN_PROVIDERS,
   HEADER_H,
@@ -68,7 +68,6 @@ export function App({ requestLogin }: AppProps = {}) {
   const [mode, setMode] = useState<Mode>("browse");
   const [inputValue, setInputValue] = useState("");
   const [routingPattern, setRoutingPattern] = useState("");
-  const [routingChain, setRoutingChain] = useState("");
   const [chainSelected, setChainSelected] = useState<Set<string>>(new Set());
   const [chainOrder, setChainOrder] = useState<string[]>([]);
   const [chainCursor, setChainCursor] = useState(0);
@@ -90,18 +89,15 @@ export function App({ requestLogin }: AppProps = {}) {
   const [editingExistingPattern, setEditingExistingPattern] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<TestResultsMap>({});
-
-  // Matrix-style key-scramble animation tick. Increments every ~80ms while
-  // ANY provider has status === "testing". When no test is in flight the
-  // interval is torn down so the TUI stays idle (no CPU, no re-renders).
   const [animTick, setAnimTick] = useState(0);
   const anyTesting = useMemo(
     () => Object.values(testResults).some((r) => r?.status === "testing"),
     [testResults]
   );
+
   useEffect(() => {
     if (!anyTesting) return;
-    const id = setInterval(() => setAnimTick((t) => (t + 1) % 1_000_000), 80);
+    const id = setInterval(() => setAnimTick((tick) => (tick + 1) % 1_000_000), 90);
     return () => clearInterval(id);
   }, [anyTesting]);
 
@@ -166,7 +162,9 @@ export function App({ requestLogin }: AppProps = {}) {
     process.env.CLAUDISH_TELEMETRY !== "false" &&
     config.telemetry?.enabled === true;
 
-  const statsEnabled = process.env.CLAUDISH_STATS !== "0" && process.env.CLAUDISH_STATS !== "false";
+  const statsDisabledByEnv =
+    process.env.CLAUDISH_STATS === "0" || process.env.CLAUDISH_STATS === "false";
+  const statsEnabled = !statsDisabledByEnv && config.stats?.enabled === true;
 
   // Merged routing rules: built-in defaults + global config + project-local
   // config rendered as a flat list with NO shadowing. If a pattern exists at
@@ -494,7 +492,6 @@ export function App({ requestLogin }: AppProps = {}) {
           refreshConfig();
         }
         setRoutingPattern("");
-        setRoutingChain("");
         setChainSelected(new Set());
         setChainOrder([]);
         setChainCursor(0);
@@ -819,7 +816,6 @@ export function App({ requestLogin }: AppProps = {}) {
     } else if (activeTab === "routing") {
       if (key.name === "a") {
         setRoutingPattern("");
-        setRoutingChain("");
         setChainSelected(new Set());
         setChainOrder([]);
         setStatusMsg(null);
@@ -905,16 +901,15 @@ export function App({ requestLogin }: AppProps = {}) {
         setStatusMsg(`Telemetry ${next ? "enabled" : "disabled"}.`);
       } else if (key.name === "u") {
         const cfg = loadConfig();
-        const statsKey = "CLAUDISH_STATS";
-        // Toggle via config (env cannot be persisted, use telemetry-like flag)
         const next = !statsEnabled;
-        if (!cfg.telemetry)
-          cfg.telemetry = { enabled: telemetryEnabled, askedAt: new Date().toISOString() };
-        (cfg as Record<string, unknown>).statsEnabled = next;
+        cfg.stats = {
+          ...(cfg.stats ?? {}),
+          enabled: next,
+          enabledAt: next ? (cfg.stats?.enabledAt ?? new Date().toISOString()) : cfg.stats?.enabledAt,
+        };
         saveConfig(cfg);
         refreshConfig();
         setStatusMsg(`Usage stats ${next ? "enabled" : "disabled"}.`);
-        void statsKey; // used for env check
       } else if (key.name === "c") {
         clearBuffer();
         setBufStats(getBufferStats());
@@ -927,7 +922,7 @@ export function App({ requestLogin }: AppProps = {}) {
     return (
       <box width="100%" height="100%" padding={1} backgroundColor={C.bg}>
         <text>
-          <span fg={C.red} bold>
+          <span fg={C.red} attributes={A.bold}>
             Terminal too small ({width}x{height}). Resize to at least 60x15.
           </span>
         </text>
@@ -951,19 +946,19 @@ export function App({ requestLogin }: AppProps = {}) {
       {/* Header */}
       <box height={HEADER_H} flexDirection="row" backgroundColor={C.bgAlt} paddingX={1}>
         <text>
-          <span fg={C.white} bold>
+          <span fg={C.white} attributes={A.bold}>
             claudish
           </span>
           <span fg={C.dim}> ─ </span>
-          <span fg={C.blue} bold>
+          <span fg={C.blue} attributes={A.bold}>
             {VERSION}
           </span>
           <span fg={C.dim}> ─ </span>
-          <span fg={C.orange} bold>
+          <span fg={C.orange} attributes={A.bold}>
             ★ {profileName}
           </span>
           <span fg={C.dim}> ─ </span>
-          <span fg={C.green} bold>
+          <span fg={C.green} attributes={A.bold}>
             {readyCount}
           </span>
           <span fg={C.fgMuted}> providers configured</span>

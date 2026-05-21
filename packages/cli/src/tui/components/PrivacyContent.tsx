@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-import { C } from "../theme.js";
+import { A, C } from "../theme.js";
 import type { Tab } from "../types.js";
 
 function bytesHuman(b: number): string {
@@ -43,11 +43,11 @@ export function PrivacyContent({
         paddingX={1}
       >
         <text>
-          <span fg={C.blue} bold>
+          <span fg={C.blue} attributes={A.bold}>
             Status:{" "}
           </span>
           {telemetryEnabled ? (
-            <span fg={C.green} bold>
+            <span fg={C.green} attributes={A.bold}>
               ● Enabled
             </span>
           ) : (
@@ -63,14 +63,14 @@ export function PrivacyContent({
         </text>
         <text> </text>
         <text>
-          <span fg={C.white} bold>
+          <span fg={C.white} attributes={A.bold}>
             Never sends keys, prompts, or paths.
           </span>
         </text>
         <text> </text>
         <text>
           <span fg={C.dim}>Press [</span>
-          <span fg={C.green} bold>
+          <span fg={C.green} attributes={A.bold}>
             t
           </span>
           <span fg={C.dim}>] to toggle.</span>
@@ -90,11 +90,11 @@ export function PrivacyContent({
         paddingX={1}
       >
         <text>
-          <span fg={C.blue} bold>
+          <span fg={C.blue} attributes={A.bold}>
             Status:{" "}
           </span>
           {statsEnabled ? (
-            <span fg={C.green} bold>
+            <span fg={C.green} attributes={A.bold}>
               ● Enabled
             </span>
           ) : (
@@ -102,10 +102,10 @@ export function PrivacyContent({
           )}
         </text>
         <text>
-          <span fg={C.blue} bold>
+          <span fg={C.blue} attributes={A.bold}>
             Buffer:{" "}
           </span>
-          <span fg={C.white} bold>
+          <span fg={C.white} attributes={A.bold}>
             {bufStats.events}
           </span>
           <span fg={C.fgMuted}> events (</span>
@@ -122,11 +122,11 @@ export function PrivacyContent({
         <text> </text>
         <text>
           <span fg={C.dim}>Press [</span>
-          <span fg={C.green} bold>
+          <span fg={C.green} attributes={A.bold}>
             u
           </span>
           <span fg={C.dim}>] to toggle, [</span>
-          <span fg={C.red} bold>
+          <span fg={C.red} attributes={A.bold}>
             c
           </span>
           <span fg={C.dim}>] to clear buffer.</span>

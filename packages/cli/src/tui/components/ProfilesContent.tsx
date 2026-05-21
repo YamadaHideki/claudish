@@ -1,8 +1,8 @@
 /** @jsxImportSource @opentui/react */
-import { C } from "../theme.js";
+import { A, C } from "../theme.js";
 import { PROVIDER_PREFIXES } from "../constants.js";
 import { loadLocalConfig } from "../../profile-config.js";
-import type { ClaudishProfileConfig } from "../../profile-config.js";
+import type { ClaudishProfileConfig, ModelMapping } from "../../profile-config.js";
 import type { Mode, Tab } from "../types.js";
 
 interface ProfilesContentProps {
@@ -52,7 +52,7 @@ export function ProfilesContent({
   const allEntries: Array<{
     name: string;
     scope: "local" | "global";
-    models: Record<string, string | undefined>;
+    models: ModelMapping;
   }> = [];
   if (localCfg) {
     for (const [name, prof] of Object.entries(localCfg.profiles)) {
@@ -98,20 +98,20 @@ export function ProfilesContent({
       <text>
         <span fg={C.dim}>{"  "}</span>
         <span fg={C.fgMuted}>Active profile: </span>
-        <span fg={C.orange} bold>
+        <span fg={C.orange} attributes={A.bold}>
           {activeProfileName}
         </span>
       </text>
       {/* Column header */}
       <text>
         <span fg={C.dim}>{"   "}</span>
-        <span fg={C.blue} bold>
+        <span fg={C.blue} attributes={A.bold}>
           {"PROFILE         "}
         </span>
-        <span fg={C.blue} bold>
+        <span fg={C.blue} attributes={A.bold}>
           {"SCOPE    "}
         </span>
-        <span fg={C.blue} bold>
+        <span fg={C.blue} attributes={A.bold}>
           {"MODELS"}
         </span>
       </text>
@@ -143,7 +143,7 @@ export function ProfilesContent({
               <span fg={C.dim}> </span>
               <span
                 fg={selected ? C.white : isActive ? C.orange : C.fgMuted}
-                bold={selected || isActive}
+                attributes={A.boldIf(selected || isActive)}
               >
                 {namePad}
               </span>
@@ -169,7 +169,7 @@ export function ProfilesContent({
       {isProfileEditMode && editPromptLabel && (
         <box flexDirection="column" paddingTop={1}>
           <text>
-            <span fg={C.blue} bold>
+            <span fg={C.blue} attributes={A.bold}>
               {editPromptLabel + " "}
             </span>
           </text>
@@ -180,7 +180,7 @@ export function ProfilesContent({
               <box height={1} flexDirection="row">
                 <box width={16} height={1} backgroundColor={C.bgHighlight} paddingX={1}>
                   <text>
-                    <span fg={C.green} bold>
+                    <span fg={C.green} attributes={A.bold}>
                       g
                     </span>
                     <span fg={C.white}> global</span>
@@ -189,7 +189,7 @@ export function ProfilesContent({
                 <box width={2} />
                 <box width={16} height={1} paddingX={1}>
                   <text>
-                    <span fg={C.cyan} bold>
+                    <span fg={C.cyan} attributes={A.bold}>
                       p
                     </span>
                     <span fg={C.fgMuted}> project (.claudish.json)</span>
@@ -197,15 +197,15 @@ export function ProfilesContent({
                 </box>
               </box>
               <text>
-                <span fg={C.green} bold>
+                <span fg={C.green} attributes={A.bold}>
                   g{" "}
                 </span>
                 <span fg={C.fgMuted}>global · </span>
-                <span fg={C.cyan} bold>
+                <span fg={C.cyan} attributes={A.bold}>
                   p{" "}
                 </span>
                 <span fg={C.fgMuted}>project · </span>
-                <span fg={C.red} bold>
+                <span fg={C.red} attributes={A.bold}>
                   Esc{" "}
                 </span>
                 <span fg={C.fgMuted}>cancel</span>
@@ -226,7 +226,7 @@ export function ProfilesContent({
                     <span fg={idx === providerPickerIndex ? C.white : C.dim}> </span>
                     <span
                       fg={idx === providerPickerIndex ? C.cyan : C.fgMuted}
-                      bold={idx === providerPickerIndex}
+                      attributes={A.boldIf(idx === providerPickerIndex)}
                     >
                       {p.prefix.padEnd(14).substring(0, 14)}
                     </span>
@@ -238,15 +238,15 @@ export function ProfilesContent({
                 </box>
               ))}
               <text>
-                <span fg={C.blue} bold>
+                <span fg={C.blue} attributes={A.bold}>
                   ↑↓{" "}
                 </span>
                 <span fg={C.fgMuted}>navigate · </span>
-                <span fg={C.green} bold>
+                <span fg={C.green} attributes={A.bold}>
                   Enter{" "}
                 </span>
                 <span fg={C.fgMuted}>select prefix · </span>
-                <span fg={C.red} bold>
+                <span fg={C.red} attributes={A.bold}>
                   Esc{" "}
                 </span>
                 <span fg={C.fgMuted}>back</span>
@@ -258,7 +258,7 @@ export function ProfilesContent({
           {mode !== "pick_profile_scope" && mode !== "pick_provider_prefix" && (
             <box flexDirection="column">
               <text>
-                <span fg={C.green} bold>
+                <span fg={C.green} attributes={A.bold}>
                   {"> "}
                 </span>
                 <span fg={editProfileValue === "auto" ? C.yellow : C.white}>
@@ -284,7 +284,7 @@ export function ProfilesContent({
                               <span fg={selected ? C.fgMuted : C.dim}>
                                 {s.substring(0, matchIdx)}
                               </span>
-                              <span fg={selected ? C.white : C.cyan} bold>
+                              <span fg={selected ? C.white : C.cyan} attributes={A.bold}>
                                 {s.substring(matchIdx, matchIdx + lower.length)}
                               </span>
                               <span fg={selected ? C.fgMuted : C.dim}>
@@ -303,40 +303,40 @@ export function ProfilesContent({
 
               {editProfileValue === "auto" ? (
                 <text>
-                  <span fg={C.yellow} bold>
+                  <span fg={C.yellow} attributes={A.bold}>
                     auto-route{" "}
                   </span>
                   <span fg={C.fgMuted}>— claudish will use the routing table · </span>
-                  <span fg={C.green} bold>
+                  <span fg={C.green} attributes={A.bold}>
                     Enter{" "}
                   </span>
                   <span fg={C.fgMuted}>to confirm · </span>
-                  <span fg={C.red} bold>
+                  <span fg={C.red} attributes={A.bold}>
                     Esc{" "}
                   </span>
                   <span fg={C.fgMuted}>cancel</span>
                 </text>
               ) : (
                 <text>
-                  <span fg={C.green} bold>
+                  <span fg={C.green} attributes={A.bold}>
                     Enter{" "}
                   </span>
                   <span fg={C.fgMuted}>save · </span>
-                  <span fg={C.blue} bold>
+                  <span fg={C.blue} attributes={A.bold}>
                     Tab{" "}
                   </span>
                   <span fg={C.fgMuted}>
                     {editProfileValue === "" ? "pick provider · " : "autocomplete · "}
                   </span>
-                  <span fg={C.blue} bold>
+                  <span fg={C.blue} attributes={A.bold}>
                     ↑↓{" "}
                   </span>
                   <span fg={C.fgMuted}>suggestion · </span>
-                  <span fg={C.yellow} bold>
+                  <span fg={C.yellow} attributes={A.bold}>
                     a{" "}
                   </span>
                   <span fg={C.fgMuted}>auto-route · </span>
-                  <span fg={C.red} bold>
+                  <span fg={C.red} attributes={A.bold}>
                     Esc{" "}
                   </span>
                   <span fg={C.fgMuted}>cancel</span>

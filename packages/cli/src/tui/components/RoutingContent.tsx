@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/react */
 import { useEffect, useRef } from "react";
 import type { ScrollBoxRenderable } from "@opentui/core";
-import { C } from "../theme.js";
+import { A, C } from "../theme.js";
 import { DETAIL_H, CHAIN_PROVIDERS } from "../constants.js";
 import { DEFAULT_ROUTING_RULES } from "../../providers/default-routing-rules.js";
 import type { ClaudishProfileConfig } from "../../profile-config.js";
@@ -128,7 +128,7 @@ export function RoutingContent({
         paddingY={1}
       >
         <text>
-          <span fg={C.white} bold>
+          <span fg={C.white} attributes={A.bold}>
             {"Route Probe"}
           </span>
         </text>
@@ -138,7 +138,7 @@ export function RoutingContent({
         </text>
         <box flexDirection="row" height={1}>
           <text>
-            <span fg={C.green} bold>
+            <span fg={C.green} attributes={A.bold}>
               {"> "}
             </span>
             <span fg={C.white}>{probeModel}</span>
@@ -188,15 +188,15 @@ export function RoutingContent({
         {/* Title row */}
         <box flexDirection="row" height={1}>
           <text>
-            <span fg={C.white} bold>
+            <span fg={C.white} attributes={A.bold}>
               {probeMode === "done" ? "Probe: " : "Probing: "}
             </span>
-            <span fg={C.cyan} bold>
+            <span fg={C.cyan} attributes={A.bold}>
               {probeModel}
             </span>
             <span fg={C.dim}>{"  "}</span>
             {probeMode === "done" && (
-              <span fg={statusBadge.color} bold>
+              <span fg={statusBadge.color} attributes={A.bold}>
                 {successEntry ? "● " : "✗ "}
                 {statusBadge.text}
               </span>
@@ -265,16 +265,16 @@ export function RoutingContent({
                 <span fg={C.dim}>{`${idx + 1}. `}</span>
                 <span
                   fg={isNoKey ? C.dim : isSelected ? C.white : isNotReached ? C.dim : C.fgMuted}
-                  bold={isSelected}
+                  attributes={A.boldIf(isSelected)}
                 >
                   {nameCol}
                 </span>
                 <span fg={C.dim}>{"  "}</span>
-                <span fg={statusColor} bold={entry.status === "success"}>
+                <span fg={statusColor} attributes={A.boldIf(entry.status === "success")}>
                   {statusIcon} {statusText}
                 </span>
                 {isSelected && (
-                  <span fg={C.green} bold>
+                  <span fg={C.green} attributes={A.bold}>
                     {" ← routed here"}
                   </span>
                 )}
@@ -293,18 +293,18 @@ export function RoutingContent({
             <text>
               {allFailed ? (
                 <>
-                  <span fg={C.red} bold>
+                  <span fg={C.red} attributes={A.bold}>
                     {"Result: "}
                   </span>
                   <span fg={C.red}>{"✗ No provider could serve this model"}</span>
                 </>
               ) : (
                 <>
-                  <span fg={C.green} bold>
+                  <span fg={C.green} attributes={A.bold}>
                     {"Result: "}
                   </span>
                   <span fg={C.fgMuted}>{"Routed to "}</span>
-                  <span fg={C.cyan} bold>
+                  <span fg={C.cyan} attributes={A.bold}>
                     {successEntry!.displayName}
                   </span>
                   {totalMs !== undefined && <span fg={C.fgMuted}>{` in ${totalMs}ms`}</span>}
@@ -334,7 +334,7 @@ export function RoutingContent({
           Each header `<text>` is pinned to height={1} so flex layout doesn't
           collapse them into the scrollbox below in tight viewports. */}
       <text height={1}>
-        <span fg={C.blue} bold>
+        <span fg={C.blue} attributes={A.bold}>
           {" Catch-all default:"}
         </span>
         <span fg={C.fgMuted}>{"  (used for any model not matched by a rule)"}</span>
@@ -369,7 +369,7 @@ export function RoutingContent({
           them inline. The scope picker shown by `a`/`e` is its own
           explainer, so we only need a discoverability nudge here. */}
       <text height={1}>
-        <span fg={C.blue} bold>{" Rules"}</span>
+        <span fg={C.blue} attributes={A.bold}>{" Rules"}</span>
         {!isRoutingInput && (
           <>
             <span fg={C.dim}>{"   "}</span>
@@ -377,16 +377,16 @@ export function RoutingContent({
             <span fg={C.dim}>{" / "}</span>
             <span fg={C.cyan}>{"project"}</span>
             <span fg={C.dim}>{" scope chosen on "}</span>
-            <span fg={C.green} bold>{"a"}</span>
+            <span fg={C.green} attributes={A.bold}>{"a"}</span>
             <span fg={C.dim}>{" or "}</span>
-            <span fg={C.green} bold>{"e"}</span>
+            <span fg={C.green} attributes={A.bold}>{"e"}</span>
           </>
         )}
       </text>
       {!isRoutingInput && mergedRules.length === 0 && (
         <text height={1}>
           <span fg={C.fgMuted}>{" No rules. Press "}</span>
-          <span fg={C.green} bold>
+          <span fg={C.green} attributes={A.bold}>
             a
           </span>
           <span fg={C.fgMuted}>{" to add."}</span>
@@ -395,10 +395,10 @@ export function RoutingContent({
       {mergedRules.length > 0 && !isRoutingInput && (
         <>
           <text height={1}>
-            <span fg={C.blue} bold>{"  "}</span>
-            <span fg={C.blue} bold>{"PATTERN         "}</span>
-            <span fg={C.blue} bold>{"SCOPE     "}</span>
-            <span fg={C.blue} bold>{"CHAIN"}</span>
+            <span fg={C.blue} attributes={A.bold}>{"  "}</span>
+            <span fg={C.blue} attributes={A.bold}>{"PATTERN         "}</span>
+            <span fg={C.blue} attributes={A.bold}>{"SCOPE     "}</span>
+            <span fg={C.blue} attributes={A.bold}>{"CHAIN"}</span>
           </text>
           {/* Native OpenTUI scrollbox. Unfocused: cursor navigation stays in
               App.tsx's useKeyboard handler; we sync scroll position via the
@@ -461,8 +461,8 @@ export function RoutingContent({
                   backgroundColor={sel ? C.bgHighlight : C.bg}
                 >
                   <text>
-                    <span fg={markerFg} bold={!isDefault}>{` ${marker} `}</span>
-                    <span fg={patFg} bold={sel}>
+                    <span fg={markerFg} attributes={A.boldIf(!isDefault)}>{` ${marker} `}</span>
+                    <span fg={patFg} attributes={A.boldIf(sel)}>
                       {rule.pattern.padEnd(16).substring(0, 16)}
                     </span>
                     <span fg={scopeFg}>{scopeText}</span>
@@ -482,9 +482,9 @@ export function RoutingContent({
       {mode === "pick_routing_scope" && (
         <box flexDirection="column" paddingTop={1} paddingX={1} style={{ flexGrow: 1 }}>
           <text height={1}>
-            <span fg={C.blue} bold>{"Scope for "}</span>
-            <span fg={C.white} bold>{routingPattern}</span>
-            <span fg={C.blue} bold>{":"}</span>
+            <span fg={C.blue} attributes={A.bold}>{"Scope for "}</span>
+            <span fg={C.white} attributes={A.bold}>{routingPattern}</span>
+            <span fg={C.blue} attributes={A.bold}>{":"}</span>
           </text>
           <text height={1}>
             <span fg={C.fgMuted}>
@@ -502,10 +502,10 @@ export function RoutingContent({
               the cursor row, bold on selected text. */}
           <box height={1} backgroundColor={routingScopeCursor === 0 ? C.bgHighlight : C.bg}>
             <text>
-              <span fg={routingScopeCursor === 0 ? C.green : C.fgMuted} bold>
+              <span fg={routingScopeCursor === 0 ? C.green : C.fgMuted} attributes={A.bold}>
                 {routingScopeCursor === 0 ? " ▸ " : "   "}
               </span>
-              <span fg={C.green} bold={routingScopeCursor === 0}>{"global   "}</span>
+              <span fg={C.green} attributes={A.boldIf(routingScopeCursor === 0)}>{"global   "}</span>
               <span fg={C.fgMuted}>{"~/.claudish/config.json"}</span>
               {editingExistingScope === "global" && (
                 <span fg={C.dim}>{"   (current)"}</span>
@@ -514,10 +514,10 @@ export function RoutingContent({
           </box>
           <box height={1} backgroundColor={routingScopeCursor === 1 ? C.bgHighlight : C.bg}>
             <text>
-              <span fg={routingScopeCursor === 1 ? C.cyan : C.fgMuted} bold>
+              <span fg={routingScopeCursor === 1 ? C.cyan : C.fgMuted} attributes={A.bold}>
                 {routingScopeCursor === 1 ? " ▸ " : "   "}
               </span>
-              <span fg={C.cyan} bold={routingScopeCursor === 1}>{"project  "}</span>
+              <span fg={C.cyan} attributes={A.boldIf(routingScopeCursor === 1)}>{"project  "}</span>
               <span fg={C.fgMuted}>{".claudish.json (walks up to git root)"}</span>
               {editingExistingScope === "project" && (
                 <span fg={C.dim}>{"   (current)"}</span>
@@ -527,11 +527,11 @@ export function RoutingContent({
           <text height={1}>{" "}</text>
           <text height={1}>
             <span fg={C.dim}>{"  "}</span>
-            <span fg={C.blue} bold>{"↑↓"}</span>
+            <span fg={C.blue} attributes={A.bold}>{"↑↓"}</span>
             <span fg={C.dim}>{" navigate · "}</span>
-            <span fg={C.green} bold>{"Enter"}</span>
+            <span fg={C.green} attributes={A.bold}>{"Enter"}</span>
             <span fg={C.dim}>{" select · "}</span>
-            <span fg={C.red} bold>{"Esc"}</span>
+            <span fg={C.red} attributes={A.bold}>{"Esc"}</span>
             <span fg={C.dim}>{" cancel"}</span>
           </text>
         </box>
@@ -541,24 +541,24 @@ export function RoutingContent({
       {mode === "add_routing_pattern" && (
         <box flexDirection="column">
           <text height={1}>
-            <span fg={C.blue} bold>
+            <span fg={C.blue} attributes={A.bold}>
               {"Pattern "}
             </span>
             <span fg={C.dim}>{"(e.g. kimi-*, gpt-4o):"}</span>
           </text>
           <text height={1}>
-            <span fg={C.green} bold>
+            <span fg={C.green} attributes={A.bold}>
               {"> "}
             </span>
             <span fg={C.white}>{routingPattern}</span>
             <span fg={C.cyan}>{"█"}</span>
           </text>
           <text height={1}>
-            <span fg={C.green} bold>
+            <span fg={C.green} attributes={A.bold}>
               Enter{" "}
             </span>
             <span fg={C.fgMuted}>to continue · </span>
-            <span fg={C.red} bold>
+            <span fg={C.red} attributes={A.bold}>
               Esc{" "}
             </span>
             <span fg={C.fgMuted}>to cancel</span>
@@ -568,10 +568,10 @@ export function RoutingContent({
       {mode === "add_routing_chain" && (
         <box flexDirection="column" style={{ flexGrow: 1 }}>
           <text height={1}>
-            <span fg={C.blue} bold>
+            <span fg={C.blue} attributes={A.bold}>
               {"Select providers for "}
             </span>
-            <span fg={C.white} bold>
+            <span fg={C.white} attributes={A.bold}>
               {routingPattern}
             </span>
             <span fg={C.dim}>{" (Space=toggle, 1-9=set position, Enter=save)"}</span>
@@ -604,11 +604,11 @@ export function RoutingContent({
                 <box key={prov.name} height={1} backgroundColor={isCursor ? C.bgHighlight : C.bg}>
                   <text>
                     {isOn ? (
-                      <span fg={C.green} bold>{` [${pos}] `}</span>
+                      <span fg={C.green} attributes={A.bold}>{` [${pos}] `}</span>
                     ) : (
                       <span fg={C.dim}>{" [ ] "}</span>
                     )}
-                    <span fg={isCursor ? C.white : hasKey ? C.fgMuted : C.dim} bold={isCursor}>
+                    <span fg={isCursor ? C.white : hasKey ? C.fgMuted : C.dim} attributes={A.boldIf(isCursor)}>
                       {label}
                     </span>
                     {hasKey ? (

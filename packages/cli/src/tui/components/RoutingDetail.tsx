@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-import { C } from "../theme.js";
+import { A, C } from "../theme.js";
 import { DETAIL_H } from "../constants.js";
 import type { ProbeMode } from "../types.js";
 import type { MergedRule } from "../types.js";
@@ -45,32 +45,32 @@ export function RoutingDetail({ probeMode, mergedRules }: RoutingDetailProps) {
       <box height={1} flexDirection="row">
         <box width={32}>
           <text>
-            <span fg={C.dim} bold>{" ·  "}</span>
+            <span fg={C.dim} attributes={A.bold}>{" ·  "}</span>
             <span fg={C.fgMuted}>{"built-in default     "}</span>
-            <span fg={C.cyan} bold>{fmtCount(defaults)}</span>
+            <span fg={C.cyan} attributes={A.bold}>{fmtCount(defaults)}</span>
           </text>
         </box>
         <box>
           <text>
-            <span fg={C.green} bold>{"  •  "}</span>
+            <span fg={C.green} attributes={A.bold}>{"  •  "}</span>
             <span fg={C.fgMuted}>{"global custom        "}</span>
-            <span fg={C.green} bold>{fmtCount(globalCustom)}</span>
+            <span fg={C.green} attributes={A.bold}>{fmtCount(globalCustom)}</span>
           </text>
         </box>
       </box>
       <box height={1} flexDirection="row">
         <box width={32}>
           <text>
-            <span fg={C.yellow} bold>{" ★  "}</span>
+            <span fg={C.yellow} attributes={A.bold}>{" ★  "}</span>
             <span fg={C.fgMuted}>{"override of default  "}</span>
-            <span fg={C.yellow} bold>{fmtCount(globalOverrides)}</span>
+            <span fg={C.yellow} attributes={A.bold}>{fmtCount(globalOverrides)}</span>
           </text>
         </box>
         <box>
           <text>
-            <span fg={C.cyan} bold>{"  ▴  "}</span>
+            <span fg={C.cyan} attributes={A.bold}>{"  ▴  "}</span>
             <span fg={C.fgMuted}>{"project rule         "}</span>
-            <span fg={C.cyan} bold>{fmtCount(projectRules.length)}</span>
+            <span fg={C.cyan} attributes={A.bold}>{fmtCount(projectRules.length)}</span>
           </text>
         </box>
       </box>

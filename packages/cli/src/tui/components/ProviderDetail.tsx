@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-import { C } from "../theme.js";
+import { A, C } from "../theme.js";
 import { DETAIL_H } from "../constants.js";
 import type { ProviderDef } from "../providers.js";
 import type { Mode, TestResultsMap } from "../types.js";
@@ -64,18 +64,18 @@ export function ProviderDetail({
         paddingX={1}
       >
         <text>
-          <span fg={C.green} bold>
+          <span fg={C.green} attributes={A.bold}>
             Enter{" "}
           </span>
           <span fg={C.fgMuted}>to save · </span>
-          <span fg={C.red} bold>
+          <span fg={C.red} attributes={A.bold}>
             Esc{" "}
           </span>
           <span fg={C.fgMuted}>to cancel</span>
         </text>
         <box flexDirection="row">
           <text>
-            <span fg={C.green} bold>
+            <span fg={C.green} attributes={A.bold}>
               &gt;{" "}
             </span>
           </text>
@@ -117,21 +117,21 @@ export function ProviderDetail({
         goes inside `{...}` to avoid JSX whitespace trimming.
       */}
       <text>
-        <span fg={C.blue} bold>{"Status: "}</span>
+        <span fg={C.blue} attributes={A.bold}>{"Status: "}</span>
         {hasKey ? (
-          <span fg={C.green} bold>{"● Ready"}</span>
+          <span fg={C.green} attributes={A.bold}>{"● Ready"}</span>
         ) : (
           <span fg={C.fgMuted}>{"○ Not configured"}</span>
         )}
         <span fg={C.dim}>{"   "}</span>
-        <span fg={C.blue} bold>{"Key: "}</span>
+        <span fg={C.blue} attributes={A.bold}>{"Key: "}</span>
         <span fg={C.green}>{displayKey}</span>
         {hasKey && (
           <>
             <span fg={C.dim}>{"   "}</span>
-            <span fg={C.blue} bold>{"From: "}</span>
+            <span fg={C.blue} attributes={A.bold}>{"From: "}</span>
             {hasEnvKey && (
-              <span fg={C.green} bold>{"env"}</span>
+              <span fg={C.green} attributes={A.bold}>{"env"}</span>
             )}
             {hasEnvKey && hasCfgKey && (
               <span fg={C.fgMuted}>{" (used) + "}</span>
@@ -140,7 +140,7 @@ export function ProviderDetail({
               <span fg={C.fgMuted}>{" (used)"}</span>
             )}
             {hasCfgKey && (
-              <span fg={hasEnvKey ? C.fgMuted : C.green} bold={!hasEnvKey}>
+              <span fg={hasEnvKey ? C.fgMuted : C.green} attributes={A.boldIf(!hasEnvKey)}>
                 {"config"}
               </span>
             )}
@@ -154,7 +154,7 @@ export function ProviderDetail({
       </text>
       {selectedProvider.endpointEnvVar && (
         <text>
-          <span fg={C.blue} bold>
+          <span fg={C.blue} attributes={A.bold}>
             URL:{" "}
           </span>
           <span fg={C.cyan}>
@@ -163,14 +163,14 @@ export function ProviderDetail({
         </text>
       )}
       <text>
-        <span fg={C.blue} bold>
+        <span fg={C.blue} attributes={A.bold}>
           Desc:{" "}
         </span>
         <span fg={C.white}>{selectedProvider.description}</span>
       </text>
       {selectedProvider.keyUrl && (
         <text>
-          <span fg={C.blue} bold>
+          <span fg={C.blue} attributes={A.bold}>
             Get Key:{" "}
           </span>
           <span fg={C.cyan}>{selectedProvider.keyUrl}</span>
@@ -178,17 +178,17 @@ export function ProviderDetail({
       )}
       {tr && (
         <text>
-          <span fg={C.blue} bold>
+          <span fg={C.blue} attributes={A.bold}>
             {"Test:  "}
           </span>
           {tr.status === "testing" && (
-            <span fg={C.yellow} bold>
+            <span fg={C.yellow} attributes={A.bold}>
               {"◌ testing..."}
             </span>
           )}
           {tr.status === "valid" && (
             <>
-              <span fg={C.green} bold>
+              <span fg={C.green} attributes={A.bold}>
                 {"● valid"}
               </span>
               {tr.ms !== undefined && <span fg={C.dim}>{`  ${tr.ms}ms`}</span>}
@@ -197,7 +197,7 @@ export function ProviderDetail({
           )}
           {tr.status === "failed" && (
             <>
-              <span fg={C.red} bold>
+              <span fg={C.red} attributes={A.bold}>
                 {"✗ failed"}
               </span>
               {tr.error && (

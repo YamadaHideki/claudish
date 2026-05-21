@@ -1,4 +1,6 @@
 /** @jsxImportSource @opentui/react */
+import { createTextAttributes } from "@opentui/core";
+
 /**
  * btop-inspired color palette — true black base, vivid neon colors.
  *
@@ -40,4 +42,11 @@ export const C = {
   // are lower-saturation forest/teal versions, contrast-tuned for white text.
   pillKeyBg: "#2d6e3e", // forest green; white text reads cleanly
   pillOauthBg: "#1f6d75", // muted teal; white text reads cleanly
+} as const;
+
+const bold = createTextAttributes({ bold: true });
+
+export const A = {
+  bold,
+  boldIf: (enabled: boolean): number | undefined => (enabled ? bold : undefined),
 } as const;
