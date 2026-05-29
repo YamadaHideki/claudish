@@ -4,6 +4,7 @@
  */
 
 import { hasOAuthCredentials } from "../auth/oauth-registry.js";
+import { isLocalProviderEnabled } from "../profile-config.js";
 import { getAllProviders, type ProviderDefinition } from "../providers/provider-definitions.js";
 
 export interface ProviderDef {
@@ -17,8 +18,10 @@ export interface ProviderDef {
   description: string;
   keyUrl: string;
   endpointEnvVar?: string;
+  endpointEnvVars?: string[];
   defaultEndpoint?: string;
   aliases?: string[];
+  isLocal?: boolean;
   /**
    * If set, this provider supports OAuth login via `claudish login {slug}`.
    * Used by the Providers tab `l` keybinding.
@@ -38,8 +41,10 @@ function toProviderDef(def: ProviderDefinition): ProviderDef {
     description: def.description || def.apiKeyDescription,
     keyUrl: def.apiKeyUrl,
     endpointEnvVar: def.baseUrlEnvVars?.[0],
+    endpointEnvVars: def.baseUrlEnvVars,
     defaultEndpoint: def.baseUrl || undefined,
     aliases: def.apiKeyAliases,
+    isLocal: def.isLocal,
     // Sourced from the catalog (provider-definitions.ts), not a duplicate
     // table here. If a provider supports `claudish login {slug}`, the
     // catalog entry declares which slug.
@@ -60,21 +65,24 @@ function toProviderDef(def: ProviderDefinition): ProviderDef {
  *   usually a stale leftover or sideband override and shouldn't be the
  *   advertised method in the UI.
  *
- *   For all other providers: env > cfg > (no OAuth path).
+ *   Local providers are ready only when explicitly enabled in global
+ *   ~/.claudish/config.json; for all other providers: env > cfg > (no OAuth path).
  *
  * Returns:
+ *   "local" - local provider explicitly enabled in global config
  *   "oauth" - valid OAuth credentials on disk (OAuth-capable providers)
  *   "e+c"   - both env var AND config-file key present
  *   "env"   - env var only
  *   "cfg"   - config-file key only
  *   null    - no credentials of any kind
  */
-export type AuthSource = "e+c" | "env" | "cfg" | "oauth" | null;
+export type AuthSource = "e+c" | "env" | "cfg" | "oauth" | "local" | null;
 
 export function providerAuthSource(
   p: ProviderDef,
-  config: { apiKeys?: Record<string, string> },
+  config: { apiKeys?: Record<string, string>; localProviders?: string[] },
 ): AuthSource {
+  if (p.isLocal) return isLocalProviderEnabled(p.catalogName, config) ? "local" : null;
   // OAuth wins for OAuth-capable providers when credentials exist.
   if (p.oauthSlug && hasOAuthCredentials(p.catalogName)) return "oauth";
   const hasCfg = !!p.apiKeyEnvVar && !!config.apiKeys?.[p.apiKeyEnvVar];
@@ -88,7 +96,7 @@ export function providerAuthSource(
 /** True when a provider has any usable credentials (key OR OAuth). */
 export function providerIsReady(
   p: ProviderDef,
-  config: { apiKeys?: Record<string, string> },
+  config: { apiKeys?: Record<string, string>; localProviders?: string[] },
 ): boolean {
   return providerAuthSource(p, config) !== null;
 }

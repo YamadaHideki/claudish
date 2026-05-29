@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   loadConfig,
   loadLocalConfig,
+  disableLocalProvider,
+  enableLocalProvider,
+  isLocalProviderEnabled,
   removeApiKey,
   removeEndpoint,
   saveConfig,
@@ -13,9 +16,20 @@ import {
 } from "../profile-config.js";
 import { DEFAULT_ROUTING_RULES } from "../providers/default-routing-rules.js";
 import { getProviderByName } from "../providers/provider-definitions.js";
-import { probeLink, describeProbeState } from "../providers/probe-live.js";
+import {
+  discoverProbeModelFromEndpoint,
+  ensureProbeModelsCached,
+  getProbeModel,
+} from "../providers/probe-catalog.js";
+import { invalidateProbeDiscovery } from "../providers/transport/probe-discovery.js";
+import { describeProbeState } from "../providers/probe-live.js";
+import { probeProviderRoute } from "../providers/probe-runner.js";
 import { clearBuffer, getBufferStats } from "../stats-buffer.js";
-import { ensureProbeProxy, isProbeProxyReady } from "./probe-proxy.js";
+import {
+  ensureProbeProxy,
+  invalidateProbeProxyHandlers,
+  isProbeProxyReady,
+} from "./probe-proxy.js";
 import {
   PROVIDERS,
   maskKey,
@@ -119,6 +133,10 @@ export function App({ requestLogin }: AppProps = {}) {
   }, [config]);
 
   const selectedProvider = displayProviders[providerIndex]!;
+  const selectedProviderDef = getProviderByName(selectedProvider.catalogName);
+  const selectedProviderIsLocal = !!(selectedProvider.isLocal || selectedProviderDef?.isLocal);
+  const selectedLocalEnabled =
+    selectedProviderIsLocal && isLocalProviderEnabled(selectedProvider.catalogName, config);
   const refreshConfig = useCallback(() => {
     setConfig(loadConfig());
     setBufStats(getBufferStats());
@@ -146,14 +164,19 @@ export function App({ requestLogin }: AppProps = {}) {
 
   const hasCfgKey = !!config.apiKeys?.[selectedProvider.apiKeyEnvVar];
   const hasEnvKey = !!process.env[selectedProvider.apiKeyEnvVar];
-  const hasKey = hasCfgKey || hasEnvKey;
+  const hasKey = hasCfgKey || hasEnvKey || selectedLocalEnabled;
   const cfgKeyMask = maskKey(config.apiKeys?.[selectedProvider.apiKeyEnvVar]);
   const envKeyMask = maskKey(process.env[selectedProvider.apiKeyEnvVar]);
+  const activeEndpointEnvVar = selectedProvider.endpointEnvVar;
+  const activeEndpointFromConfig = activeEndpointEnvVar
+    ? config.endpoints?.[activeEndpointEnvVar]
+    : undefined;
+  const activeEndpointFromEnv = selectedProvider.endpointEnvVars
+    ?.map((envVar) => process.env[envVar])
+    .find((value): value is string => !!value);
   const activeEndpoint =
-    (selectedProvider.endpointEnvVar
-      ? config.endpoints?.[selectedProvider.endpointEnvVar] ||
-        process.env[selectedProvider.endpointEnvVar]
-      : undefined) ||
+    activeEndpointFromConfig ||
+    activeEndpointFromEnv ||
     selectedProvider.defaultEndpoint ||
     "";
 
@@ -230,40 +253,108 @@ export function App({ requestLogin }: AppProps = {}) {
    * a batch of these in parallel without awaiting.
    */
   const runProbeTest = useCallback(async (prov: ProviderDef): Promise<void> => {
-    const def = getProviderByName(prov.catalogName);
-    const testModel = def?.testModel;
     const provName = prov.name;
-    if (!testModel) {
+
+    setTestResults((prev) => ({ ...prev, [provName]: { status: "testing" } }));
+    const outcome = await ensureProbeModelsCached();
+    if (outcome.kind !== "ok") {
       setTestResults((prev) => ({
         ...prev,
-        [provName]: { status: "failed", error: "no test model configured" },
+        [provName]: {
+          status: "failed",
+          error: `could not reach model catalog (${outcome.kind})`,
+        },
       }));
       return;
     }
 
-    setTestResults((prev) => ({ ...prev, [provName]: { status: "testing" } }));
     const startMs = Date.now();
     try {
       const proxyUrl = await ensureProbeProxy();
-      const result = await probeLink(
-        proxyUrl,
-        {
-          provider: prov.catalogName,
-          modelSpec: `${prov.catalogName}@${testModel}`,
-          // Let the proxy resolve credentials (env, cfg, OAuth). probeLink's
-          // pre-flight gate is for static env-var checks only; for everything
-          // else the live request is the source of truth.
-          hasCredentials: true,
-        },
-        15000
-      );
+      const catalogModel = getProbeModel(prov.catalogName);
+      // Models that already failed this round — passed to discovery so we
+      // get the NEXT candidate, not the same one again.
+      const tried = new Set<string>();
+      const MAX_ATTEMPTS = 3;
+      let lastResult: import("../providers/probe-live.js").ProbeResult | null = null;
+      let lastDiscoveryReason: string | undefined;
+
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        let testModel: string | null = null;
+        // On the first attempt, the cloud catalog's pick wins. On retries,
+        // the cloud catalog is exhausted (it returns one model) so we always
+        // walk the endpoint's own list via discovery.
+        if (attempt === 0 && catalogModel && !tried.has(catalogModel)) {
+          testModel = catalogModel;
+        } else {
+          const discovery = await discoverProbeModelFromEndpoint(
+            proxyUrl,
+            prov.catalogName,
+            tried
+          );
+          testModel = discovery.model;
+          lastDiscoveryReason = discovery.reason;
+        }
+        if (!testModel) break;
+
+        tried.add(testModel);
+        const result = await probeProviderRoute(
+          proxyUrl,
+          {
+            provider: prov.catalogName,
+            modelSpec: testModel,
+            // Let the shared probe path and proxy resolve credentials (env,
+            // cfg, OAuth). The live request is the source of truth.
+            hasCredentials: true,
+          },
+          15000
+        );
+        lastResult = result;
+
+        if (result.state === "live" || result.state === "rate-limited") break;
+        // Retry on per-model failures (the next candidate might work).
+        // Don't retry on transport-level failures (auth/network/timeout) —
+        // those won't get better by changing model.
+        const retryable =
+          result.state === "model-not-found" || result.state === "error";
+        if (!retryable) break;
+      }
+
       const ms = Date.now() - startMs;
-      if (result.state === "live") {
-        setTestResults((prev) => ({ ...prev, [provName]: { status: "valid", ms } }));
-      } else {
+      if (!lastResult) {
+        // Discovery never produced even one model.
         setTestResults((prev) => ({
           ...prev,
-          [provName]: { status: "failed", error: describeProbeState(result), ms },
+          [provName]: {
+            status: "failed",
+            error: lastDiscoveryReason
+              ? `no probe model: ${lastDiscoveryReason}`
+              : "no probe model available",
+            ms,
+          },
+        }));
+        return;
+      }
+      const result = lastResult;
+      if (result.state === "live") {
+        setTestResults((prev) => ({ ...prev, [provName]: { status: "valid", ms } }));
+      } else if (result.state === "rate-limited") {
+        // 429 proves auth+endpoint+model are all reachable — the only thing
+        // wrong is the user's current request rate. Treat as healthy, just
+        // annotate so the user knows why latency is high right now.
+        setTestResults((prev) => ({
+          ...prev,
+          [provName]: { status: "valid", ms, note: "throttled" },
+        }));
+      } else {
+        const baseError = describeProbeState(result);
+        const error =
+          tried.size > 1
+            ? `${baseError} (tried ${tried.size} models)`
+            : baseError;
+        setTestResults((prev) => ({
+          ...prev,
+          [provName]: { status: "failed", error, ms },
         }));
       }
     } catch (err: unknown) {
@@ -327,16 +418,36 @@ export function App({ requestLogin }: AppProps = {}) {
           return;
         }
         if (mode === "input_key") {
-          setApiKey(selectedProvider.apiKeyEnvVar, val);
-          process.env[selectedProvider.apiKeyEnvVar] = val;
-          setStatusMsg(`Key saved for ${selectedProvider.displayName}.`);
+          if (!selectedProvider.apiKeyEnvVar) {
+            setStatusMsg(
+              `${selectedProvider.displayName} has no apiKeyEnvVar — cannot save key.`
+            );
+          } else {
+            setApiKey(selectedProvider.apiKeyEnvVar, val);
+            process.env[selectedProvider.apiKeyEnvVar] = val;
+            setStatusMsg(
+              `Key saved for ${selectedProvider.displayName} (${selectedProvider.apiKeyEnvVar}).`
+            );
+          }
         } else {
-          if (selectedProvider.endpointEnvVar) {
+          if (!selectedProvider.endpointEnvVar) {
+            setStatusMsg(
+              `${selectedProvider.displayName} has no endpointEnvVar — cannot save URL.`
+            );
+          } else {
             setEndpoint(selectedProvider.endpointEnvVar, val);
             process.env[selectedProvider.endpointEnvVar] = val;
+            setStatusMsg(
+              `URL saved for ${selectedProvider.displayName} (${selectedProvider.endpointEnvVar}=${val}).`
+            );
           }
-          setStatusMsg("Endpoint saved.");
         }
+        // Drop stale caches so the next probe picks up the new URL/key.
+        // Without this the probe-proxy keeps using a pre-built transport
+        // pointing at the old endpoint, and discovery returns the cached
+        // model lookup keyed by the old URL.
+        invalidateProbeProxyHandlers(selectedProvider.catalogName);
+        invalidateProbeDiscovery(selectedProvider.catalogName);
         refreshConfig();
         setInputValue("");
         setMode("browse");
@@ -416,7 +527,12 @@ export function App({ requestLogin }: AppProps = {}) {
         setChainCursor((i) => Math.min(CHAIN_PROVIDERS.length - 1, i + 1));
       } else if (key.name === "space" || key.raw === " ") {
         // Toggle: add to end or remove
-        const provName = CHAIN_PROVIDERS[chainCursor].name;
+        const prov = CHAIN_PROVIDERS[chainCursor];
+        if (prov.isLocal && !providerIsReady(prov, config)) {
+          setStatusMsg(`${prov.displayName} is disabled. Enable it in Providers first.`);
+          return;
+        }
+        const provName = prov.name;
         setChainSelected((prev) => {
           const next = new Set(prev);
           if (next.has(provName)) {
@@ -430,7 +546,12 @@ export function App({ requestLogin }: AppProps = {}) {
         });
       } else if (key.raw && key.raw >= "1" && key.raw <= "9") {
         // Number key: move current provider to that position in chain
-        const provName = CHAIN_PROVIDERS[chainCursor].name;
+        const prov = CHAIN_PROVIDERS[chainCursor];
+        if (prov.isLocal && !providerIsReady(prov, config)) {
+          setStatusMsg(`${prov.displayName} is disabled. Enable it in Providers first.`);
+          return;
+        }
+        const provName = prov.name;
         const targetPos = parseInt(key.raw, 10) - 1; // 0-indexed
         setChainSelected((prev) => {
           const next = new Set(prev);
@@ -628,27 +749,63 @@ export function App({ requestLogin }: AppProps = {}) {
         setProviderIndex((i) => Math.min(displayProviders.length - 1, i + 1));
         setStatusMsg(null);
       } else if (key.name === "s") {
-        setInputValue("");
-        setStatusMsg(null);
-        setMode("input_key");
+        if (selectedProvider.apiKeyEnvVar) {
+          setInputValue("");
+          setStatusMsg(null);
+          setMode("input_key");
+        } else if (selectedProvider.endpointEnvVar) {
+          setInputValue(activeEndpoint);
+          setStatusMsg(null);
+          setMode("input_endpoint");
+        } else {
+          setStatusMsg(`${selectedProvider.displayName} has no API-key setup.`);
+        }
       } else if (key.name === "e") {
-        if (selectedProvider.endpointEnvVar) {
+        if (selectedProviderIsLocal) {
+          if (selectedLocalEnabled) {
+            disableLocalProvider(selectedProvider.catalogName);
+            setStatusMsg(`${selectedProvider.displayName} disabled in global config.`);
+          } else {
+            enableLocalProvider(selectedProvider.catalogName);
+            setStatusMsg(`${selectedProvider.displayName} enabled in global config.`);
+          }
+          refreshConfig();
+        } else if (selectedProvider.endpointEnvVar) {
           setInputValue(activeEndpoint);
           setStatusMsg(null);
           setMode("input_endpoint");
         } else {
           setStatusMsg("This provider has no custom endpoint.");
         }
+      } else if (key.name === "u") {
+        // Edit URL for any provider that has a configurable endpoint.
+        // For local providers `e` is taken by the enable/disable toggle, so
+        // `u` is the consistent way to edit the URL across all provider types.
+        if (selectedProvider.endpointEnvVar) {
+          setInputValue(activeEndpoint);
+          setStatusMsg(null);
+          setMode("input_endpoint");
+        } else {
+          setStatusMsg("This provider has no editable URL.");
+        }
       } else if (key.name === "x") {
+        let changed = false;
         if (hasCfgKey) {
           removeApiKey(selectedProvider.apiKeyEnvVar);
-          if (selectedProvider.endpointEnvVar) {
-            removeEndpoint(selectedProvider.endpointEnvVar);
-          }
+          changed = true;
+        }
+        if (activeEndpointEnvVar && config.endpoints?.[activeEndpointEnvVar]) {
+          removeEndpoint(activeEndpointEnvVar);
+          delete process.env[activeEndpointEnvVar];
+          changed = true;
+        }
+        if (changed) {
+          invalidateProbeProxyHandlers(selectedProvider.catalogName);
+          invalidateProbeDiscovery(selectedProvider.catalogName);
           refreshConfig();
-          setStatusMsg(`Key removed for ${selectedProvider.displayName}.`);
+          setStatusMsg(`Stored config removed for ${selectedProvider.displayName}.`);
         } else {
-          setStatusMsg("No stored key to remove.");
+          setStatusMsg("No stored config to remove.");
         }
       } else if (key.name === "l") {
         // OAuth login for the selected provider. Signal the wrapper
@@ -689,20 +846,20 @@ export function App({ requestLogin }: AppProps = {}) {
         // would be misleading: "no key, no oauth" isn't a test failure, it's
         // just an unused row.
         //
-        // Providers without a `testModel` are also skipped here (no point
-        // firing a request we know won't have anywhere meaningful to go).
+        // The probe model for each provider is picked from the cached
+        // /probeModels catalog inside runProbeTest. Providers with no entry
+        // surface as "no probe model in catalog" rather than being skipped
+        // silently — that's a more useful signal than an absent row.
         const fired: string[] = [];
         for (const prov of PROVIDERS) {
           if (!providerIsReady(prov, config)) continue;
-          const def = getProviderByName(prov.catalogName);
-          if (!def?.testModel) continue;
           fired.push(prov.displayName);
           // Fire-and-forget — errors are written into testResults inside
           // runProbeTest, no need to await.
           void runProbeTest(prov);
         }
         if (fired.length === 0) {
-          setStatusMsg("No credentialed providers with test models to test.");
+          setStatusMsg("No credentialed providers to test.");
         } else {
           const startupHint = !isProbeProxyReady()
             ? " (starting probe proxy…)"
@@ -718,7 +875,11 @@ export function App({ requestLogin }: AppProps = {}) {
         const caps = providerAuthCapabilities(selectedProvider, config);
         const ready = providerIsReady(selectedProvider, config);
         if (!ready) {
-          if (caps.apiKey.supported && caps.oauth.supported) {
+          if (selectedProviderIsLocal) {
+            setStatusMsg(
+              `${selectedProvider.displayName}: disabled. Press e to enable in global config.`
+            );
+          } else if (caps.apiKey.supported && caps.oauth.supported) {
             setStatusMsg(
               `${selectedProvider.displayName}: no credentials. Press s to set a key or l to login.`
             );
@@ -737,16 +898,12 @@ export function App({ requestLogin }: AppProps = {}) {
           }
           return;
         }
-        const def = getProviderByName(selectedProvider.catalogName);
-        if (!def?.testModel) {
-          setStatusMsg(
-            `${selectedProvider.displayName} has no test model configured.`
-          );
-          return;
-        }
         if (!isProbeProxyReady()) {
           setStatusMsg("Starting probe proxy…");
         }
+        // Probe model is picked from the cached /probeModels catalog inside
+        // runProbeTest. A missing entry surfaces as a failure row, not a
+        // status-line message, so the user sees it on the provider row itself.
         void runProbeTest(selectedProvider);
       }
     } else if (activeTab === "profiles") {
@@ -1074,6 +1231,8 @@ export function App({ requestLogin }: AppProps = {}) {
                 apiKey: !!selectedProvider.apiKeyEnvVar,
                 oauth: !!selectedProvider.oauthSlug,
                 endpoint: !!selectedProvider.endpointEnvVar,
+                local: selectedProviderIsLocal,
+                localEnabled: selectedLocalEnabled,
               }
             : undefined
         }

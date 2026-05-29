@@ -22,6 +22,7 @@
 interface LiveProxy {
   url: string;
   shutdown: () => Promise<void>;
+  invalidateHandlerCache: (providerSlug?: string) => void;
 }
 
 let probeProxy: LiveProxy | null = null;
@@ -82,4 +83,13 @@ export async function shutdownProbeProxy(): Promise<void> {
 /** True when the probe proxy is already up (no startup latency on next call). */
 export function isProbeProxyReady(): boolean {
   return probeProxy !== null;
+}
+
+/**
+ * Drop the proxy's per-provider handler cache so the next probe rebuilds
+ * the transport from current config. No-op if the proxy hasn't been started
+ * yet — there's nothing to invalidate.
+ */
+export function invalidateProbeProxyHandlers(providerSlug?: string): void {
+  probeProxy?.invalidateHandlerCache(providerSlug);
 }

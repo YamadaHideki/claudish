@@ -1,5 +1,5 @@
 import { hasOAuthCredentials } from "../auth/oauth-registry.js";
-import { loadConfig, loadLocalConfig } from "../profile-config.js";
+import { isLocalProviderEnabled, loadConfig, loadLocalConfig } from "../profile-config.js";
 import type { RoutingEntry, RoutingRules } from "../profile-config.js";
 import { DISPLAY_NAMES, PROVIDER_TO_PREFIX } from "./auto-route.js";
 import { DEFAULT_ROUTING_RULES } from "./default-routing-rules.js";
@@ -209,12 +209,13 @@ export type RoutePlan =
  *     `/v1/responses` endpoint requires the codex subscription — sending a
  *     plain OpenAI key produces "instructions are required" 400 errors. For
  *     routing we require the codex-specific env var or the OAuth file.
- *   - Local transports (ollama, lmstudio, vllm, mlx) are always usable.
+ *   - Local transports (ollama, lmstudio, vllm, mlx) must be explicitly
+ *     enabled in global config.
  *   - OAuth-backed providers (kimi, gemini-codeassist) are considered
  *     credentialed if either an OAuth file or env var is present.
  */
 function hasCredentialsForProvider(provider: string): boolean {
-  if (isLocalTransport(provider)) return true;
+  if (isLocalTransport(provider)) return isLocalProviderEnabled(provider);
 
   if (provider === "native-anthropic") {
     return !!process.env.ANTHROPIC_API_KEY || !!process.env.ANTHROPIC_AUTH_TOKEN;

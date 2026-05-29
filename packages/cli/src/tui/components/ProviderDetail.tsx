@@ -49,7 +49,15 @@ export function ProviderDetail({
 }: ProviderDetailProps) {
   // Show the mask of the key that's ACTUALLY being used at runtime.
   // process.env wins over config in the resolver, so env is shown first when both exist.
-  const displayKey = hasEnvKey ? envKeyMask : hasCfgKey ? cfgKeyMask : "────────";
+  const displayKey = selectedProvider.isLocal
+    ? hasKey
+      ? "enabled"
+      : "disabled"
+    : hasEnvKey
+      ? envKeyMask
+      : hasCfgKey
+        ? cfgKeyMask
+        : "────────";
 
   if (isInputMode) {
     return (
@@ -81,6 +89,12 @@ export function ProviderDetail({
           </text>
           <input
             value={inputValue}
+            // onInput fires on every keystroke; onChange only fires on blur
+            // or the input's own submit (which doesn't happen here because
+            // our useKeyboard handler intercepts Enter first). Without this
+            // the parent's inputValue stays at the prefilled value and the
+            // user's edits are lost when they press Enter.
+            onInput={setInputValue}
             onChange={setInputValue}
             focused={true}
             width={width - 8}
@@ -126,7 +140,14 @@ export function ProviderDetail({
         <span fg={C.dim}>{"   "}</span>
         <span fg={C.blue} attributes={A.bold}>{"Key: "}</span>
         <span fg={C.green}>{displayKey}</span>
-        {hasKey && (
+        {hasKey && selectedProvider.isLocal && (
+          <>
+            <span fg={C.dim}>{"   "}</span>
+            <span fg={C.blue} attributes={A.bold}>{"From: "}</span>
+            <span fg={C.green} attributes={A.bold}>{"global config"}</span>
+          </>
+        )}
+        {hasKey && !selectedProvider.isLocal && (
           <>
             <span fg={C.dim}>{"   "}</span>
             <span fg={C.blue} attributes={A.bold}>{"From: "}</span>
@@ -192,7 +213,11 @@ export function ProviderDetail({
                 {"● valid"}
               </span>
               {tr.ms !== undefined && <span fg={C.dim}>{`  ${tr.ms}ms`}</span>}
-              <span fg={C.fgMuted}>{"  API key is valid and endpoint is reachable."}</span>
+              <span fg={C.fgMuted}>
+                {selectedProvider.isLocal
+                  ? "  Local provider responded through the shared probe path."
+                  : "  API key is valid and endpoint is reachable."}
+              </span>
             </>
           )}
           {tr.status === "failed" && (

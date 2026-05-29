@@ -121,6 +121,8 @@ export interface ClaudishProfileConfig {
   apiKeys?: Record<string, string>;
   /** Custom provider endpoints (env var name → URL) */
   endpoints?: Record<string, string>;
+  /** Built-in local providers explicitly enabled in global config. */
+  localProviders?: string[];
   /** ISO timestamp when user confirmed auto-approve behavior. Absent = never confirmed. */
   autoApproveConfirmedAt?: string;
   /** Diagnostic output mode: auto (default), logfile, off */
@@ -210,6 +212,9 @@ export function loadConfig(): ClaudishProfileConfig {
     }
     if (config.endpoints !== undefined) {
       merged.endpoints = config.endpoints;
+    }
+    if (config.localProviders !== undefined) {
+      merged.localProviders = Array.from(new Set(config.localProviders)).sort();
     }
     if (config.autoApproveConfirmedAt !== undefined) {
       merged.autoApproveConfirmedAt = config.autoApproveConfirmedAt;
@@ -704,4 +709,43 @@ export function removeEndpoint(name: string): void {
     delete config.endpoints[name];
     saveConfig(config);
   }
+}
+
+// ─── Local Provider Helpers ─────────────────────────────────
+
+/**
+ * Check whether a built-in local provider is explicitly enabled in
+ * ~/.claudish/config.json.
+ */
+export function isLocalProviderEnabled(
+  providerName: string,
+  config: { localProviders?: string[] } = loadConfig()
+): boolean {
+  return (config.localProviders ?? []).includes(providerName);
+}
+
+/**
+ * Enable a built-in local provider in ~/.claudish/config.json.
+ */
+export function enableLocalProvider(providerName: string): void {
+  const config = loadConfig();
+  const providers = new Set(config.localProviders ?? []);
+  providers.add(providerName);
+  config.localProviders = Array.from(providers).sort();
+  saveConfig(config);
+}
+
+/**
+ * Disable a built-in local provider in ~/.claudish/config.json.
+ */
+export function disableLocalProvider(providerName: string): void {
+  const config = loadConfig();
+  const providers = new Set(config.localProviders ?? []);
+  providers.delete(providerName);
+  if (providers.size > 0) {
+    config.localProviders = Array.from(providers).sort();
+  } else {
+    delete config.localProviders;
+  }
+  saveConfig(config);
 }

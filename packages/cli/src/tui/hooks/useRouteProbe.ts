@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { route } from "../../providers/routing-rules.js";
-import { describeProbeState, probeLink } from "../../providers/probe-live.js";
+import { describeProbeState } from "../../providers/probe-live.js";
+import { probeProviderRoute } from "../../providers/probe-runner.js";
 import type { ClaudishProfileConfig } from "../../profile-config.js";
 import { PROVIDERS, providerIsReady } from "../providers.js";
 import { ensureProbeProxy } from "../probe-proxy.js";
@@ -173,9 +174,7 @@ export function useRouteProbe(config: ClaudishProfileConfig): UseRouteProbeRetur
           prev.map((e, idx) => (idx === i ? { ...e, status: "testing" } : e))
         );
         const startMs = Date.now();
-        // The Route.modelSpec is already a fully-formed "provider@model"
-        // string built by buildRoutingChain — feed it straight to probeLink.
-        const result = await probeLink(
+        const result = await probeProviderRoute(
           proxyUrl,
           {
             provider: link.provider,

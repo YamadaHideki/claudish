@@ -87,6 +87,8 @@ export function ProvidersContent({
     let keyDisplay: string;
     if (isTesting) {
       keyDisplay = animatedCode(8, animTick, p.name);
+    } else if (p.isLocal) {
+      keyDisplay = "local";
     } else if (isOauthOnly) {
       keyDisplay = "oauth···";
     } else if (auth === "cfg") {
@@ -102,14 +104,15 @@ export function ProvidersContent({
 
     // `tr` was already resolved above (for the key scramble); reuse it here.
     let statusFg: string = isReady ? C.green : C.dim;
-    let statusText = isReady ? "ready" : "not set";
+    let statusText = p.isLocal ? (isReady ? "enabled" : "disabled") : isReady ? "ready" : "not set";
     if (tr) {
       if (tr.status === "testing") {
         statusFg = C.yellow;
         statusText = "testing";
       } else if (tr.status === "valid") {
         statusFg = C.green;
-        statusText = tr.ms !== undefined ? `ready ${tr.ms}ms` : "ready";
+        const base = tr.ms !== undefined ? `ready ${tr.ms}ms` : "ready";
+        statusText = tr.note ? `${base} ${tr.note}` : base;
       } else {
         statusFg = C.red;
         statusText = "FAIL";
@@ -197,7 +200,7 @@ export function ProvidersContent({
             </>
             <span fg={C.dim}>{"  "}</span>
             <span
-              fg={isTesting ? C.yellow : isOauthOnly ? C.cyan : isReady ? C.cyan : C.dim}
+              fg={isTesting ? C.yellow : p.isLocal ? (isReady ? C.green : C.dim) : isOauthOnly ? C.cyan : isReady ? C.cyan : C.dim}
               attributes={A.boldIf(isTesting)}
             >
               {pad(keyDisplay, COL_KEY)}

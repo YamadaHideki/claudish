@@ -5,6 +5,7 @@ import { A, C } from "../theme.js";
 import { DETAIL_H, CHAIN_PROVIDERS } from "../constants.js";
 import { DEFAULT_ROUTING_RULES } from "../../providers/default-routing-rules.js";
 import type { ClaudishProfileConfig } from "../../profile-config.js";
+import { providerIsReady } from "../providers.js";
 import type { MergedRule, Mode, ProbeEntry, ProbeMode } from "../types.js";
 
 // Format a chain as inline text: "kimi → openrouter"
@@ -596,9 +597,7 @@ export function RoutingContent({
               const isCursor = idx === chainCursor;
               const isOn = chainSelected.has(prov.name);
               const pos = isOn ? chainOrder.indexOf(prov.name) + 1 : 0;
-              const hasKey = !!(
-                config.apiKeys?.[prov.apiKeyEnvVar] || process.env[prov.apiKeyEnvVar]
-              );
+              const ready = providerIsReady(prov, config);
               const label = prov.displayName.padEnd(18).substring(0, 18);
               return (
                 <box key={prov.name} height={1} backgroundColor={isCursor ? C.bgHighlight : C.bg}>
@@ -608,13 +607,13 @@ export function RoutingContent({
                     ) : (
                       <span fg={C.dim}>{" [ ] "}</span>
                     )}
-                    <span fg={isCursor ? C.white : hasKey ? C.fgMuted : C.dim} attributes={A.boldIf(isCursor)}>
+                    <span fg={isCursor ? C.white : ready ? C.fgMuted : C.dim} attributes={A.boldIf(isCursor)}>
                       {label}
                     </span>
-                    {hasKey ? (
+                    {ready ? (
                       <span fg={C.green}>{" ●"}</span>
                     ) : (
-                      <span fg={C.dim}>{" ○ no key"}</span>
+                      <span fg={C.dim}>{prov.isLocal ? " ○ disabled" : " ○ no key"}</span>
                     )}
                   </text>
                 </box>

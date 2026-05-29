@@ -9,14 +9,16 @@ interface FooterProps {
   probeMode: ProbeMode;
   /**
    * When on the Providers tab in browse mode, the cursor row's auth
-   * capabilities. Used to hide `s set key` / `l login` chips on rows
-   * that don't support the corresponding method. Omitting either field
-   * means "show that chip" (back-compat).
+   * capabilities. Used to hide `s set key` / `l login` / `e endpoint`
+   * chips on rows that don't support the corresponding method. Omitting
+   * the object means "show every chip" (back-compat).
    */
   providerCaps?: {
     apiKey: boolean;
     oauth: boolean;
     endpoint: boolean;
+    local: boolean;
+    localEnabled: boolean;
   };
 }
 
@@ -59,12 +61,18 @@ export function Footer({ activeTab, mode, probeMode, providerCaps }: FooterProps
     // When providerCaps is omitted (e.g. legacy callers, empty list), all
     // chips are shown — back-compat.
     const showKey = providerCaps ? providerCaps.apiKey : true;
-    const showEndpoint = providerCaps ? providerCaps.endpoint : true;
+    const showEndpoint = providerCaps ? providerCaps.endpoint || providerCaps.local : true;
     const showLogin = providerCaps ? providerCaps.oauth : true;
-    const showRemove = providerCaps ? providerCaps.apiKey : true;
+    const showRemove = providerCaps ? !providerCaps.local && (providerCaps.apiKey || providerCaps.endpoint) : true;
+    // `u` is shown whenever the provider has an editable endpoint URL.
+    // For local providers it's the ONLY way to change the URL because `e`
+    // is taken by the enable/disable toggle. For remote providers it's a
+    // shortcut equivalent to `e endpoint`.
+    const showUrl = providerCaps ? providerCaps.endpoint : true;
     keys = [[C.blue, "↑↓", "navigate"]];
     if (showKey) keys.push([C.green, "s", "set key"]);
-    if (showEndpoint) keys.push([C.green, "e", "endpoint"]);
+    if (showEndpoint) keys.push([C.green, "e", providerCaps?.local ? (providerCaps.localEnabled ? "disable" : "enable") : "endpoint"]);
+    if (showUrl) keys.push([C.green, "u", "url"]);
     if (showLogin) keys.push([C.green, "l", "login"]);
     keys.push([C.cyan, "t", "test"]);
     keys.push([C.cyan, "T", "test all"]);

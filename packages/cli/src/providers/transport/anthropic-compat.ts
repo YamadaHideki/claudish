@@ -13,6 +13,7 @@ import type { ProviderTransport, StreamFormat } from "./types.js";
 import type { RemoteProvider } from "../../handlers/shared/remote-provider-types.js";
 import { log } from "../../logger.js";
 import { KimiOAuth } from "../../auth/kimi-oauth.js";
+import { isTerminal429 } from "./openai.js";
 
 export class AnthropicProviderTransport implements ProviderTransport {
   readonly name: string;
@@ -78,6 +79,52 @@ export class AnthropicProviderTransport implements ProviderTransport {
     }
 
     return headers;
+  }
+
+  /**
+   * Retry 429 responses with bounded backoff. Anthropic-compat providers
+   * (Kimi, MiniMax, Z.AI) throttle aggressively; one quick retry helps
+   * recover transient bursts. The retry budget is intentionally tight
+   * (~3s worst case) so probe deadlines (typically 15s) don't get blown
+   * by an extended retry chain — the probe surfaces 429 as a healthy
+   * "throttled" signal instead.
+   *
+   * Terminal 429s (billing/quota) skip the retry chain — see isTerminal429
+   * in transport/openai.ts for the patterns matched.
+   */
+  async enqueueRequest(fetchFn: () => Promise<Response>): Promise<Response> {
+    const maxRetries = 2;
+    let lastResponse: Response | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const response = await fetchFn();
+
+      if (response.status === 429 && attempt < maxRetries) {
+        const bodyText = await response.clone().text().catch(() => "");
+        if (isTerminal429(bodyText)) {
+          log(`[${this.displayName}] 429 is terminal (billing/quota), not retrying`);
+          return response;
+        }
+        lastResponse = response;
+        const retryAfter = response.headers.get("Retry-After");
+        let delayMs: number;
+        if (retryAfter && !Number.isNaN(Number(retryAfter))) {
+          delayMs = Math.min(Number(retryAfter) * 1000, 2000);
+        } else {
+          // 500ms, 1000ms — quick recovery without blowing probe budget
+          delayMs = 500 * (attempt + 1);
+        }
+        log(
+          `[${this.displayName}] 429 rate limited, retry ${attempt + 1}/${maxRetries} in ${(delayMs / 1000).toFixed(1)}s`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      return response;
+    }
+
+    return lastResponse!;
   }
 
   private static formatDisplayName(name: string): string {

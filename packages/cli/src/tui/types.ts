@@ -63,6 +63,9 @@ export interface TestResult {
   status: "testing" | "valid" | "failed";
   error?: string;
   ms?: number;
+  /** Optional annotation when status is "valid" but the endpoint reported a
+   *  non-fatal condition (e.g. "throttled" for 429-but-healthy). */
+  note?: string;
 }
 
 export type TestResultsMap = Record<string, TestResult>;
