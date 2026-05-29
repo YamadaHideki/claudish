@@ -2,6 +2,60 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.2.0] - 2026-05-29
+
+### Bug Fixes
+
+- probe failures across providers — verified end-to-end *(tui)* ([`ca5ef98`](https://github.com/MadAppGang/claudish/commit/ca5ef98cf3d2410f71d178d298ccc0d2f18f59ec))
+- claude-sonnet-4-6 (current Sonnet), not 4-5 *(tui)* ([`d11ad2d`](https://github.com/MadAppGang/claudish/commit/d11ad2d535d882953f113636f5460bf654c6ce2e))
+- use current claude-sonnet-4-5 as testModel for Anthropic-compat coding plans *(tui)* ([`ceb27bd`](https://github.com/MadAppGang/claudish/commit/ceb27bd0f425bb8a3b5b5b1368714a3cc2c8459f))
+- Anthropic-compat coding plans accept Claude model names, not native *(tui)* ([`4c4bde0`](https://github.com/MadAppGang/claudish/commit/4c4bde0975473418ddb0a497b3d57b3ac86189f2))
+- `t` on unconfigured provider doesn't fake a failure *(tui)* ([`c3aaea8`](https://github.com/MadAppGang/claudish/commit/c3aaea89d413b874d60a9b70cb6de5819c82f430))
+- pin AUTH legend to bottom of Providers panel *(tui)* ([`df9323f`](https://github.com/MadAppGang/claudish/commit/df9323fd26960b9440d405b523211138f8fdf30c))
+- OAuth wins over env for OAuth-capable providers *(tui)* ([`59283ad`](https://github.com/MadAppGang/claudish/commit/59283ad5f71898b3d083312bbbe7096be131aa59))
+- test-all skips providers without a key *(tui)* ([`98e1355`](https://github.com/MadAppGang/claudish/commit/98e1355e715dbf87806490f4f851f342207544bc))
+- scope picker readable, prune empty .claudish.json *(tui)* ([`bbfc7a7`](https://github.com/MadAppGang/claudish/commit/bbfc7a70d1464cb1e7f8c792c9c3a95caa3429d3))
+- walk up to find .claudish.json in parent directories *(config)* ([`5630b4c`](https://github.com/MadAppGang/claudish/commit/5630b4cb59c61359a6e437663a8eeb1af5ed840e))
+- make rule matching case-insensitive *(routing)* ([`253bda6`](https://github.com/MadAppGang/claudish/commit/253bda6b5e9f16a41eb2f732c6b0c6695a712054))
+- treat defaultProvider == built-in as built-in in routing tab *(tui)* ([`c80a787`](https://github.com/MadAppGang/claudish/commit/c80a78779194b58f50643449c36a5465a434786a))
+
+### Documentation
+
+- update CHANGELOG.md for v7.1.2([`980ea08`](https://github.com/MadAppGang/claudish/commit/980ea089288070c7da99308d9fdae191ff44ffe7))
+
+### New Features
+
+- catalog-driven probes + endpoint self-discovery + multi-candidate retry *(tui)* ([`432efc1`](https://github.com/MadAppGang/claudish/commit/432efc1a746cb613b08f0f636768bed998b21679))
+- multi-source key display, inline test errors, key scramble animation *(tui)* ([`4b32c6a`](https://github.com/MadAppGang/claudish/commit/4b32c6ae8ea3c7789b04f2044c377d29d8d0f3b0))
+- return to TUI after login (child process for OAuth flow) *(tui)* ([`c4c670a`](https://github.com/MadAppGang/claudish/commit/c4c670a080a64d15466cf0640be7b3dbd5909861))
+- `l` actually launches login (TUI exits, login runs, exit) *(tui)* ([`14482b3`](https://github.com/MadAppGang/claudish/commit/14482b3bb144c0ba61fdcef3d8f54b86c8466440))
+- emoji AUTH icons + legend at bottom *(tui)* ([`ae007ce`](https://github.com/MadAppGang/claudish/commit/ae007cebfdc99cf661a11c33e9ed99d81a12a544))
+- AUTH column shows oauth alongside set key *(tui)* ([`0813824`](https://github.com/MadAppGang/claudish/commit/0813824ab6f32af4ff0c8621c3c3c7f6c64c9773))
+- AUTH column as single pill, muted colors *(tui)* ([`b16c6c3`](https://github.com/MadAppGang/claudish/commit/b16c6c37f8a69b6fd6bf5cb12eb8614d313e8d87))
+- AUTH column as bg-pill tags *(tui)* ([`a0be986`](https://github.com/MadAppGang/claudish/commit/a0be986b8e91f4cfff1503d0925f7b9666839311))
+- Providers AUTH capability slots + dynamic footer *(tui)* ([`dea4e21`](https://github.com/MadAppGang/claudish/commit/dea4e21494cab230f9eef9485ea6427cb84cd983))
+- Providers tab column alignment + OAuth indicator *(tui)* ([`5b71e2d`](https://github.com/MadAppGang/claudish/commit/5b71e2d19e5f5133e85a464569da8d7412f161a5))
+- OAuth login hint on Providers tab + footer width fix *(tui)* ([`d602667`](https://github.com/MadAppGang/claudish/commit/d602667015df95473de5b0bbcf1bb9dc80b6d939))
+- restore parallel test-all on Providers tab *(tui)* ([`57ee4d7`](https://github.com/MadAppGang/claudish/commit/57ee4d760bd1d1ecf357b73f0b6288f03de8a4e7))
+- compact Rules header *(tui)* ([`60c21f8`](https://github.com/MadAppGang/claudish/commit/60c21f889ac437c0d9790449646ca4a53eeed09c))
+- redesign Routing Legend panel as 2x2 table *(tui)* ([`236872e`](https://github.com/MadAppGang/claudish/commit/236872e4d09a27acbce25662e66c00c5d85fe771))
+- scope picker as navigable menu (arrows + Enter) *(tui)* ([`31541dc`](https://github.com/MadAppGang/claudish/commit/31541dcb003e3342737ea47d64fbe7f3609672a9))
+- show all routing rules per scope, no shadowing *(tui)* ([`4bb788b`](https://github.com/MadAppGang/claudish/commit/4bb788b3f1bb386f36eb2124749b9608f264b9e6))
+- project-scope routing rules with g/p picker *(tui)* ([`7ed9f91`](https://github.com/MadAppGang/claudish/commit/7ed9f91eeac4233bb41787250584e9e61c3f52d5))
+- scrollable rules table and chain selector *(tui)* ([`f1be9a9`](https://github.com/MadAppGang/claudish/commit/f1be9a92301ea7eafad8458d8d5d580a38234296))
+- show built-in routing rules in Routing tab *(tui)* ([`35dcda2`](https://github.com/MadAppGang/claudish/commit/35dcda25fc3f5d34c6750836ad15bac731c178b1))
+
+### Other Changes
+
+- release v7.2.0 — catalog-driven TUI probes + endpoint self-discovery([`7f5f534`](https://github.com/MadAppGang/claudish/commit/7f5f534441852a7658fb2adcba090e7df6fbc953))
+
+### Refactoring
+
+- unify provider testing via probeLink + proxy *(tui)* ([`3f0b35f`](https://github.com/MadAppGang/claudish/commit/3f0b35f5d295ee3bacd16ceed9a592d4e58caf25))
+- extract useProfileWizard hook *(tui)* ([`b3b34ff`](https://github.com/MadAppGang/claudish/commit/b3b34ffce37e3faf4cae86c4d5f117debdabd852))
+- extract useRouteProbe hook *(tui)* ([`9efd707`](https://github.com/MadAppGang/claudish/commit/9efd7078d6632082222cce186bf00b561234d1e2))
+- extract render closures into components/ *(tui)* ([`be27b8e`](https://github.com/MadAppGang/claudish/commit/be27b8e584922b7d7797c0e95c97a3242d57acba))
+
 ## [7.1.2] - 2026-05-09
 
 ### Bug Fixes
