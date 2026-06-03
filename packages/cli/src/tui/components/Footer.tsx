@@ -22,20 +22,6 @@ interface FooterProps {
   };
 }
 
-/**
- * Pick black or white chip text for a `#rrggbb` background by its perceptual
- * luminance (luma weights — green dominates). Bright fills (neon green, cyan,
- * yellow) get black text; dark fills (blue, red, gray) get white. Computed, not
- * hardcoded per-hotkey, so it stays correct if a chip's color changes upstream.
- */
-function chipTextColor(bgHex: string): string {
-  const r = parseInt(bgHex.slice(1, 3), 16);
-  const g = parseInt(bgHex.slice(3, 5), 16);
-  const b = parseInt(bgHex.slice(5, 7), 16);
-  const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-  return luma > 150 ? C.black : C.fg;
-}
-
 export function Footer({ activeTab, mode, probeMode, providerCaps }: FooterProps) {
   // Recompute isProfileEditMode from the `mode` prop — pure on `mode`, kept
   // self-contained so the parent doesn't have to pass a derived bool.
@@ -153,17 +139,23 @@ export function Footer({ activeTab, mode, probeMode, providerCaps }: FooterProps
   return (
     <box height={FOOTER_H} flexDirection="row" paddingX={1} backgroundColor={C.bgAlt}>
       <text>
-        {keys.map(([color, key, label], i) => (
+        {/* Monochrome two-tone chips: per-hotkey color is intentionally ignored
+            (the `_color` slot). Each chip is ONE connected pill — a lighter-gray
+            key segment abutting a darker-gray label segment, with NO gap between
+            them. Emphasis is by text brightness (bright bold key vs. muted
+            label), not hue. Gaps BETWEEN chips have no background. */}
+        {keys.map(([_color, key, label], i) => (
           <span key={i}>
-            {/* Gap between chip groups — no pipe separators; spacing carries it. */}
             {i > 0 && <span>{"  "}</span>}
-            {/* Key badge: solid color fill, auto black/white text by luminance,
-                spaces inside for pill padding. */}
-            <span fg={chipTextColor(color as string)} bg={color as string} attributes={A.bold}>
+            {/* Key segment — lighter fill, bright bold text. */}
+            <span fg={C.fg} bg={C.chipKeyBg} attributes={A.bold}>
               {` ${key} `}
             </span>
-            {/* Label: muted plain text beside the badge. */}
-            <span fg={C.fgMuted}>{` ${label}`}</span>
+            {/* Label segment — darker fill, muted text. Abuts the key segment
+                (no space between spans) so the two read as one pill. */}
+            <span fg={C.fgMuted} bg={C.chipLabelBg}>
+              {`${label} `}
+            </span>
           </span>
         ))}
       </text>
