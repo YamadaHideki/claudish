@@ -2,6 +2,32 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.3.0] - 2026-06-03
+
+### Bug Fixes
+
+- bound tok/s, absolute throughput color, details heading *(probe)* ([`dc5d7e8`](https://github.com/MadAppGang/claudish/commit/dc5d7e809fade4781e738b963f9a187aacd5f25f))
+
+### Documentation
+
+- update CHANGELOG.md for v7.2.0([`96bad24`](https://github.com/MadAppGang/claudish/commit/96bad24f15c4b08e8a61db9ef57247891cec9e8d))
+
+### New Features
+
+- stay-in-TUI tabbed results + routing advisor *(probe)* ([`701a593`](https://github.com/MadAppGang/claudish/commit/701a593baea0ae19c323dc1089a08545bf08b4ac))
+- two-row header, package version, profile wizard cursor handling *(tui)* ([`d07ac4e`](https://github.com/MadAppGang/claudish/commit/d07ac4e87980cb3ff9631615e3f3fe6cf7c9de4d))
+- show winning provider in leaderboard *(probe)* ([`bbffaa5`](https://github.com/MadAppGang/claudish/commit/bbffaa5d86cd11d9c0e40c11b134e74c9039b678))
+- rich timing TUI — leaderboard, vivid bars, mouse + key scroll *(probe)* ([`6d1077c`](https://github.com/MadAppGang/claudish/commit/6d1077cb0a70ea3f41a007271aeb614311ffbad1))
+- footer hotkey chips + provider list scroll-into-view *(tui)* ([`8796ff6`](https://github.com/MadAppGang/claudish/commit/8796ff60b054f91ba9778baf02ef6a66945f8b8c))
+
+### Other Changes
+
+- release v7.3.0 — interactive tabbed probe results + routing advisor([`9e9ba5d`](https://github.com/MadAppGang/claudish/commit/9e9ba5deee9743ec6daafa7ff348e866dcb2399c))
+
+### Refactoring
+
+- monochrome two-tone footer chips *(tui)* ([`a3b18e7`](https://github.com/MadAppGang/claudish/commit/a3b18e744015fa15e84004e4260b036a0aef9f94))
+
 ## [7.2.0] - 2026-05-29
 
 ### Bug Fixes
