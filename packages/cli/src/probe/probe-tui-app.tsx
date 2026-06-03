@@ -366,42 +366,6 @@ function Banner() {
 
 // ── Step indicator ─────────────────────────────────────────────────
 
-// Single compact status line for the LIVE-phase pipeline steps. Sequential,
-// fast steps don't each deserve a row \u2014 show one icon per step on one line,
-// then the name of whatever step is currently active (or the last one done).
-function StepLine({ steps }: { steps: ProbeStepState[] }) {
-  const iconMap: Record<ProbeStepState["status"], string> = {
-    pending: "\u25CB", // \u25CB
-    running: "\u25CC", // \u25CC
-    done: "\u2713", // \u2713
-    error: "\u2717", // \u2717
-  };
-  const colorMap: Record<ProbeStepState["status"], string> = {
-    pending: C.dim,
-    running: C.cyan,
-    done: C.green,
-    error: C.red,
-  };
-  if (steps.length === 0) return <text> </text>;
-  // The label = first running/error step, else the last step.
-  const active =
-    steps.find((s) => s.status === "running" || s.status === "error") ??
-    steps[steps.length - 1];
-  return (
-    <text>
-      <span>{"  "}</span>
-      {steps.map((s, i) => (
-        <span key={`${s.name}-${i}`} fg={colorMap[s.status]}>
-          {iconMap[s.status]}
-          {i < steps.length - 1 ? " " : ""}
-        </span>
-      ))}
-      <span fg={C.dim}>{"  "}</span>
-      <span fg={colorMap[active.status]}>{active.name}</span>
-    </text>
-  );
-}
-
 // ── Progress bar row ───────────────────────────────────────────────
 
 /**
@@ -1511,8 +1475,8 @@ export function ProbeApp({
   // hint. In the DONE phase the steps block is gone and a tab-bar row takes its
   // place; the legend only shows on the Summary tab. Floored so a short
   // terminal can't produce a zero height.
-  // LIVE phase now uses a SINGLE compact StepLine (was N rows + paddingY).
-  const stepsRows = isDone ? 0 : state.steps.length > 0 ? 1 : 0;
+  // No pipeline-step indicator any more — the live probing rows are the feedback.
+  const stepsRows = 0;
   const tabBarRows = isDone ? TAB_BAR_ROWS : 0;
   const legendRows = showSummary ? LEGEND_ROWS : 0;
   const listH = Math.max(
@@ -1556,16 +1520,9 @@ export function ProbeApp({
         <Banner />
       </box>
 
-      {/* LIVE phase: a SINGLE compact status line (the steps are sequential and
-          fast — three full rows + padding wasted vertical space). DONE phase:
-          interactive tab bar. */}
-      {isDone ? (
-        <TabBar activeTab={state.activeTab} />
-      ) : (
-        <box flexDirection="column">
-          <StepLine steps={state.steps} />
-        </box>
-      )}
+      {/* DONE phase: interactive tab bar. LIVE phase shows NO pipeline-step
+          indicator — the probing model rows below ARE the feedback. */}
+      {isDone ? <TabBar activeTab={state.activeTab} /> : null}
 
       {groups.length > 0 ? (
         <>
