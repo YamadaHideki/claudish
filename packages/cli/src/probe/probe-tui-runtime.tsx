@@ -4,6 +4,11 @@
  * mounts the React tree, and exposes the external store plus a shutdown
  * function. All output goes to process.stderr so stdout stays clean for
  * --json piping.
+ *
+ * The TUI now STAYS ALIVE after probing completes (the "done" phase): cli.ts
+ * flips the store to the interactive tabbed view and awaits `waitForQuit()`,
+ * which resolves when the user presses q / Esc inside the app. cli.ts then
+ * prints the leaderboard to scrollback and calls `shutdown()`.
  */
 
 import { createCliRenderer } from "@opentui/core";
@@ -12,6 +17,8 @@ import { ProbeApp, ProbeStore, type ProbeAppState } from "./probe-tui-app.js";
 
 export interface ProbeRuntime {
   store: ProbeStore;
+  /** Resolves when the user quits the interactive "done" phase (q / Esc). */
+  waitForQuit: () => Promise<void>;
   shutdown: () => Promise<void>;
 }
 
@@ -35,8 +42,23 @@ export async function startProbeTui(
   });
 
   const store = new ProbeStore(initial);
+
+  // Quit promise — resolved by the in-app keyboard handler (q / Esc) via the
+  // onQuit callback passed into ProbeApp. cli.ts awaits this before shutting
+  // down + printing the leaderboard to scrollback.
+  let resolveQuit!: () => void;
+  const quitPromise = new Promise<void>((resolve) => {
+    resolveQuit = resolve;
+  });
+  let quit = false;
+  const onQuit = (): void => {
+    if (quit) return;
+    quit = true;
+    resolveQuit();
+  };
+
   const root: Root = createRoot(renderer);
-  root.render(<ProbeApp store={store} />);
+  root.render(<ProbeApp store={store} onQuit={onQuit} />);
 
   let destroyed = false;
   const shutdown = async (): Promise<void> => {
@@ -54,5 +76,5 @@ export async function startProbeTui(
     }
   };
 
-  return { store, shutdown };
+  return { store, waitForQuit: () => quitPromise, shutdown };
 }

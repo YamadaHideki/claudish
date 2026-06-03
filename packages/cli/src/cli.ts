@@ -63,9 +63,11 @@ import type {
   ProbeAppState,
   ProbeLinkState,
   ProbeStepState,
+  ProbeModelResult,
 } from "./probe/probe-tui-app.js";
 import {
   printProbeResults,
+  printLeaderboardScrollback,
   type ModelResult as PrintableModelResult,
 } from "./probe/probe-results-printer.js";
 // Re-export from centralized provider-resolver for backwards compatibility
@@ -1218,6 +1220,82 @@ async function probeModelRouting(
     return { parsed, chain, chainDetails };
   }
 
+  /**
+   * Routing-why one-liner shown on the right of each model header in the
+   * Details tab. Kept as a SINGLE function so a later routing worktree can swap
+   * the derivation in one place (the current buildModelChain has known bugs that
+   * a future worktree will reconcile — this only consumes its output).
+   */
+  function buildRoutingExplanation(
+    parsed: ReturnType<typeof parseModelSpec>,
+    chain: ReturnType<typeof buildModelChain>["chain"],
+  ): string {
+    if (chain.source === "direct") {
+      return `explicit · ${parsed.provider} (direct)`;
+    }
+    if (chain.source === "custom-rules" && chain.matchedPattern) {
+      return `custom-rules · matched \`${chain.matchedPattern}\``;
+    }
+    if (chain.source === "auto-chain") {
+      if (chain.matchedPattern && chain.matchedPattern !== "*") {
+        return `auto-chain · default rule \`${chain.matchedPattern}\``;
+      }
+      return "auto-chain · catch-all → openrouter";
+    }
+    return chain.source;
+  }
+
+  /**
+   * Build the provider-comparison links the Details tab renders. For EXPLICIT /
+   * direct models buildModelChain returns an empty chain (the probe lives in
+   * directProbe), so we synthesize a single link carrying that probe — the model
+   * still renders one row and the live-count derives from the SAME array as the
+   * rows. The model id is the RESOLVED bare id (parsed.model), never the raw
+   * provider@-prefixed input, so we never render `provider@provider@model`.
+   */
+  function buildResultLinks(
+    parsed: ReturnType<typeof parseModelSpec>,
+    chainDetails: ReturnType<typeof buildModelChain>["chainDetails"],
+    directProbe: ProbeResult | undefined,
+  ): ProbeModelResult["links"] {
+    if (chainDetails.length === 0) {
+      // Explicit/direct model — one synthetic link from the native provider.
+      const directProviderDef = getProviderByName(parsed.provider);
+      const directKeyInfo = API_KEY_MAP[parsed.provider];
+      const directHasCreds = directProviderDef?.isLocal
+        ? isLocalProviderEnabled(parsed.provider)
+        : directKeyInfo?.envVar
+          ? !!process.env[directKeyInfo.envVar] ||
+            (directKeyInfo.aliases?.some((a) => !!process.env[a]) ?? false)
+          : true;
+      return [
+        {
+          provider: parsed.provider,
+          displayName: directProviderDef?.displayName ?? parsed.provider,
+          modelId: parsed.model,
+          hasCredentials: directHasCreds,
+          credentialHint:
+            directProviderDef?.isLocal && !directHasCreds
+              ? "enable local provider in global config"
+              : directKeyInfo?.envVar,
+          probe: directProbe,
+        },
+      ];
+    }
+    return chainDetails.map((c) => ({
+      provider: c.provider,
+      displayName: c.displayName,
+      // Strip any redundant provider@ prefix so the row shows displayName + the
+      // resolved id only (e.g. "qwen/qwen3-coder", not "openrouter@qwen/…").
+      modelId: c.modelSpec.includes("@")
+        ? c.modelSpec.slice(c.modelSpec.indexOf("@") + 1)
+        : c.modelSpec,
+      hasCredentials: c.hasCredentials,
+      credentialHint: c.credentialHint,
+      probe: c.probe,
+    }));
+  }
+
   /** Compute wiring for the first-ready provider in a chain */
   async function computeWiring(
     chainDetails: ReturnType<typeof buildModelChain>["chainDetails"],
@@ -1409,6 +1487,9 @@ async function probeModelRouting(
   const initialState: ProbeAppState = {
     steps: [],
     links: [],
+    phase: "live",
+    results: [],
+    activeTab: "leaderboard",
   };
   const tui = await startProbeTui(initialState);
 
@@ -1594,13 +1675,18 @@ async function probeModelRouting(
       await Promise.all(probePromises);
     }
 
-    // Step 6: Compute wiring for each model BEFORE tearing down TUI
-    // (computeWiring does async imports that we want to finish while the
-    // progress UI is still up).
+    // Step 6: Compute wiring for each model while the progress UI is still up
+    // (computeWiring does async imports we want to finish before the flip).
+    // We build BOTH payloads from the same per-model data:
+    //   - `printable` (PrintableModelResult) feeds the non-TTY static printer
+    //     and the leaderboard-to-scrollback print on quit.
+    //   - `results` (ProbeModelResult) feeds the interactive Details tab.
     const isLiveProbe = !!liveProxy;
     const printable: PrintableModelResult[] = [];
+    const results: ProbeModelResult[] = [];
     for (const { modelInput, parsed, chain, chainDetails } of modelChains) {
       const wiring = await computeWiring(chainDetails, parsed.model);
+      const directProbe = directProbeResults.get(modelInput);
       printable.push({
         model: modelInput,
         nativeProvider: parsed.provider,
@@ -1616,23 +1702,52 @@ async function probeModelRouting(
           provenance: c.provenance,
           probe: c.probe,
         })),
-        directProbe: directProbeResults.get(modelInput),
+        directProbe,
+        wiring,
+      });
+      results.push({
+        model: modelInput,
+        nativeProvider: parsed.provider,
+        isExplicit: parsed.isExplicitProvider,
+        routingSource: chain.source,
+        matchedPattern: chain.matchedPattern,
+        routingExplanation: buildRoutingExplanation(parsed, chain),
+        links: buildResultLinks(parsed, chainDetails, directProbe),
         wiring,
       });
     }
 
-    // Shut down the OpenTUI renderer cleanly BEFORE printing static output.
-    // This avoids the OpenTUI in-place reconciliation bug where swapping
-    // the component tree from progress-bars to a wide results table garbled
-    // the final panel.
-    if (liveProxy) {
-      try { await liveProxy.shutdown(); } catch { /* ignore */ }
-      liveProxy = null;
-    }
-    await tui.shutdown();
+    // TTY gate: `process.stdout.isTTY` is the discriminator that distinguishes a
+    // bare interactive run (both std streams are a TTY) from a `… | cat` pipe
+    // (stdout is piped, stderr stays a TTY). The literal `stderr.isTTY` would
+    // route `… | cat` to the interactive path and hang forever waiting for `q`.
+    const interactive = !!process.stdout.isTTY && !!process.stderr.isTTY;
 
-    // Now print the static results table to stderr as plain ANSI text.
-    printProbeResults(printable, isLiveProbe);
+    if (interactive) {
+      // STAY INSIDE THE TUI: land results + flip to the "done" phase (tabs),
+      // keep the app alive, and wait for the user to quit (q / Esc). Nothing is
+      // dumped to stdout. The live proxy can shut down now — all probes are done.
+      if (liveProxy) {
+        try { await liveProxy.shutdown(); } catch { /* ignore */ }
+        liveProxy = null;
+      }
+      tui.store.setResults(results);
+      await tui.waitForQuit();
+      await tui.shutdown();
+      // Leave the leaderboard frame in scrollback (durable result after the TUI
+      // tears down) so the original "scrollback-able results" ask still holds.
+      printLeaderboardScrollback(printable, isLiveProbe);
+    } else {
+      // Non-TTY / piped path — keep today's behavior. Shut down the renderer
+      // cleanly BEFORE printing static output (avoids the OpenTUI in-place
+      // reconciliation bug) and print the full static results table to stderr.
+      if (liveProxy) {
+        try { await liveProxy.shutdown(); } catch { /* ignore */ }
+        liveProxy = null;
+      }
+      await tui.shutdown();
+      printProbeResults(printable, isLiveProbe);
+    }
   } finally {
     if (liveProxy) {
       try { await liveProxy.shutdown(); } catch { /* ignore */ }

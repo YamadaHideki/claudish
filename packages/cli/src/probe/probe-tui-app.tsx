@@ -26,7 +26,12 @@ import {
   splitStageCells,
   tokBarCells,
 } from "../tui/theme.js";
-import { STREAM_MS_FLOOR, type ProbeTiming } from "../providers/probe-live.js";
+import {
+  STREAM_MS_FLOOR,
+  describeProbeState,
+  type ProbeResult,
+  type ProbeTiming,
+} from "../providers/probe-live.js";
 import { VERSION } from "../version.js";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -52,9 +57,63 @@ export interface ProbeLinkState {
   timing?: ProbeTiming;
 }
 
+/** One link (provider candidate) in a model's resolved Details view. */
+export interface ProbeResultLink {
+  provider: string;
+  /** Provider display name, e.g. "OpenAI", "OpenRouter". */
+  displayName: string;
+  /** Resolved model id sent to the API, with NO redundant provider@ prefix. */
+  modelId: string;
+  hasCredentials: boolean;
+  credentialHint?: string;
+  probe?: ProbeResult;
+}
+
+/** Per-model results payload the Details tab consumes (built in cli.ts). */
+export interface ProbeModelResult {
+  /** User input, e.g. "gpt-5.5" or "or@deepseek-v4-pro". */
+  model: string;
+  /** Parsed native provider name. */
+  nativeProvider: string;
+  /** Explicit provider@model spec. */
+  isExplicit: boolean;
+  routingSource: "direct" | "custom-rules" | "auto-chain";
+  /** Routing rule key that matched (for the routing-why line). */
+  matchedPattern?: string;
+  /**
+   * Pre-computed routing explanation string. Derived in ONE helper in cli.ts so
+   * a later routing worktree can swap the derivation in a single place.
+   */
+  routingExplanation: string;
+  /**
+   * Provider-comparison links. For explicit/direct models this is a single
+   * synthetic link carrying the directProbe (so the model still renders one row
+   * and the live-count derives from the SAME array as the rows).
+   */
+  links: ProbeResultLink[];
+  wiring?: {
+    formatAdapter: string;
+    declaredStreamFormat: string;
+    modelTranslator: string;
+    contextWindow: number;
+    supportsVision: boolean;
+    transportOverride: string | null;
+    effectiveStreamFormat: string;
+  };
+}
+
+export type ProbePhase = "live" | "done";
+export type ProbeTab = "leaderboard" | "details";
+
 export interface ProbeAppState {
   steps: ProbeStepState[];
   links: ProbeLinkState[];
+  /** "live" while probing; "done" after results land (interactive tabs). */
+  phase: ProbePhase;
+  /** Per-model results — populated when probing completes. */
+  results: ProbeModelResult[];
+  /** Active tab in the "done" phase. */
+  activeTab: ProbeTab;
 }
 
 // ── External store ──────────────────────────────────────────────────
@@ -78,6 +137,15 @@ export class ProbeStore {
   setState(updater: (prev: ProbeAppState) => ProbeAppState): void {
     this.state = updater(this.state);
     for (const fn of this.listeners) fn();
+  }
+
+  /** Land the results payload and flip to the interactive "done" phase. */
+  setResults(results: ProbeModelResult[]): void {
+    this.setState((prev) => ({ ...prev, results, phase: "done" }));
+  }
+
+  setActiveTab(tab: ProbeTab): void {
+    this.setState((prev) => ({ ...prev, activeTab: tab }));
   }
 
   subscribe(fn: () => void): () => void {
@@ -298,12 +366,15 @@ function Banner() {
 
 // ── Step indicator ─────────────────────────────────────────────────
 
-function StepIndicator({ step }: { step: ProbeStepState }) {
+// Single compact status line for the LIVE-phase pipeline steps. Sequential,
+// fast steps don't each deserve a row \u2014 show one icon per step on one line,
+// then the name of whatever step is currently active (or the last one done).
+function StepLine({ steps }: { steps: ProbeStepState[] }) {
   const iconMap: Record<ProbeStepState["status"], string> = {
-    pending: "\u25CB",
-    running: "\u25CC",
-    done: "\u2713",
-    error: "\u2717",
+    pending: "\u25CB", // \u25CB
+    running: "\u25CC", // \u25CC
+    done: "\u2713", // \u2713
+    error: "\u2717", // \u2717
   };
   const colorMap: Record<ProbeStepState["status"], string> = {
     pending: C.dim,
@@ -311,12 +382,22 @@ function StepIndicator({ step }: { step: ProbeStepState }) {
     done: C.green,
     error: C.red,
   };
+  if (steps.length === 0) return <text> </text>;
+  // The label = first running/error step, else the last step.
+  const active =
+    steps.find((s) => s.status === "running" || s.status === "error") ??
+    steps[steps.length - 1];
   return (
     <text>
       <span>{"  "}</span>
-      <span fg={colorMap[step.status]}>
-        {iconMap[step.status]} {step.name}
-      </span>
+      {steps.map((s, i) => (
+        <span key={`${s.name}-${i}`} fg={colorMap[s.status]}>
+          {iconMap[s.status]}
+          {i < steps.length - 1 ? " " : ""}
+        </span>
+      ))}
+      <span fg={C.dim}>{"  "}</span>
+      <span fg={colorMap[active.status]}>{active.name}</span>
     </text>
   );
 }
@@ -607,31 +688,59 @@ function ModelGroup({
 // scrollable model list gets the remaining terminal rows as its viewport.
 const BANNER_ROWS = 7;
 const SCROLL_HINT_ROWS = 1;
-const LEGEND_ROWS = 3; // 2 dim lines + 1 dim rule
+const LEGEND_ROWS = 2; // 1 compact swatch+caption line + 1 dim rule
 const MIN_LIST_H = 4;
+// DONE-phase tab bar: 1 tab row + 1 blank spacer row.
+const TAB_BAR_ROWS = 2;
 
 /**
- * Top legend (2 dim lines + a dim rule), rendered once above the scrollbox.
- * Line 1 = stage swatches + idle; line 2 = how to read the bars.
+ * Interactive tab bar shown in the "done" phase. Active tab reads cyan+bold;
+ * inactive reads dim. A right-aligned key hint sits on the same row.
+ */
+function TabBar({ activeTab }: { activeTab: ProbeTab }) {
+  // Background-filled pills (using the dedicated tab theme) so the active tab is
+  // unmistakable at a glance — the previous dim/cyan TEXT-only treatment read as
+  // weak. Active = solid blue fill + white bold; inactive = dark fill + blue.
+  // Key shortcuts are intentionally NOT shown here — they live in the bottom
+  // hint line, so the tab bar stays a clean two-pill selector.
+  const tab = (label: string, active: boolean) => (
+    <span
+      bg={active ? C.tabActiveBg : C.tabInactiveBg}
+      fg={active ? C.tabActiveFg : C.tabInactiveFg}
+      attributes={active ? A.bold : undefined}
+    >
+      {`  ${label}  `}
+    </span>
+  );
+  return (
+    <box flexDirection="column" paddingTop={1} paddingBottom={1}>
+      <text>
+        <span fg={C.dim}>{"  "}</span>
+        {tab("1 Leaderboard", activeTab === "leaderboard")}
+        <span>{" "}</span>
+        {tab("2 Details", activeTab === "details")}
+      </text>
+    </box>
+  );
+}
+
+/**
+ * Top legend — ONE compact line (stage swatches + a terse caption) + a dim rule.
+ * The colored swatches carry the meaning; the caption is kept short so the whole
+ * legend is two rows instead of four.
  */
 function Legend({ rowWidth }: { rowWidth: number }) {
   const ruleWidth = Math.max(1, Math.min(rowWidth, 120));
   return (
     <box flexDirection="column">
       <text>
-        <span fg={C.dim}>{"  Stages:  "}</span>
         <span bg={STAGE_BG.network}>{"  "}</span>
-        <span fg={STAGE_FG.network}>{" network   "}</span>
+        <span fg={STAGE_FG.network}>{" net "}</span>
         <span bg={STAGE_BG.server}>{"  "}</span>
-        <span fg={STAGE_FG.server}>{" server   "}</span>
+        <span fg={STAGE_FG.server}>{" srv "}</span>
         <span bg={STAGE_BG.streaming}>{"  "}</span>
-        <span fg={STAGE_FG.streaming}>{" streaming        "}</span>
-        <span fg={C.dim}>{"·· idle"}</span>
-      </text>
-      <text>
-        <span fg={C.dim}>
-          {"  bar length = total time, shared scale (slowest link = full bar)  ·  tok/s scaled to fastest"}
-        </span>
+        <span fg={STAGE_FG.streaming}>{" str "}</span>
+        <span fg={C.dim}>{"·· idle  ·  bar = total time (shared scale) · tok/s color = absolute"}</span>
       </text>
       <text>
         <span fg={C.dim}>{"  " + "─".repeat(ruleWidth)}</span>
@@ -640,10 +749,383 @@ function Legend({ rowWidth }: { rowWidth: number }) {
   );
 }
 
-export function ProbeApp({ store }: { store: ProbeStore }) {
+// ── Details view ───────────────────────────────────────────────────
+//
+// Per model: one header line (bold name + dim routing explanation), one row per
+// provider-comparison link (winner ● + displayName + ✓/✗ + the SAME aligned
+// timeline/breakdown/tok columns as the leaderboard), and one dim wire line.
+// NO full-row background slab — emphasis comes from ●, bar length, and the
+// ABSOLUTE throughput color only. Failed links keep the provider column aligned
+// and carry a dim-red short reason instead of a bar.
+
+function formatContextWindow(ctx: number): string {
+  if (ctx <= 0) return "0";
+  if (ctx >= 1_000_000) return `${(ctx / 1_000_000).toFixed(1)}M`;
+  return `${Math.round(ctx / 1000)}K`;
+}
+
+/**
+ * Bare model name to key a suggested routing rule on. Strips any `provider@`
+ * prefix (e.g. `or@grok-4.3` → `grok-4.3`) so the suggested rule keys on the
+ * model the way the user would type it. The vendor path (`x-ai/grok-4.3`) is
+ * kept as-is — that's a valid routing-rule key too.
+ */
+function ruleKeyForModel(model: string): string {
+  const at = model.indexOf("@");
+  return at >= 0 ? model.slice(at + 1) : model;
+}
+
+/**
+ * Visible width of a Details live row, mirroring the columns rendered in
+ * DetailLinkRow. The header's routing explanation right-aligns to this so it
+ * hugs the right edge of the row content (not the oversized live-view rowWidth).
+ *   [2 indent][1 ●][1 sp][provW][2 sp][✓/✗ 1][2 sp][B timeline][2][7 TOTAL]
+ *   [BREAKDOWN][2 or tok][T tok bar][1][7 tok value]
+ */
+function detailRowWidth(provW: number, layout: ProbeLayout): number {
+  let w = 2 + 1 + 1 + provW + 2 + 1 + 2; // up to start of timeline
+  w += layout.barWidth + 2 + TOTAL_COL;
+  if (layout.showBreakdown) w += BREAKDOWN_COL;
+  else w += 2;
+  if (layout.tokWidth > 0) w += layout.tokWidth + 1;
+  w += TOK_VALUE_COL;
+  return w;
+}
+
+/** Short, dim-red failure reason for a non-live link (mirrors describeProbeState). */
+function shortFailureReason(probe: ProbeResult | undefined, hasCreds: boolean): string {
+  if (!probe) return hasCreds ? "not probed" : "key missing";
+  if (probe.state === "key-missing") return "key missing";
+  return stripAnsi(describeProbeState(probe));
+}
+
+/**
+ * One Details row per provider link. Live links render the aligned
+ * timeline/breakdown/tok columns; failed links render a dim-red reason. The
+ * winner (first live+timed link) gets a brightGreen ●; everyone else a space,
+ * so the provider column lines up across both row types.
+ */
+function DetailLinkRow({
+  link,
+  isWinner,
+  provW,
+  layout,
+  maxTotalMs,
+  maxTokPerSec,
+}: {
+  link: ProbeResultLink;
+  isWinner: boolean;
+  provW: number;
+  layout: ProbeLayout;
+  maxTotalMs: number;
+  maxTokPerSec: number;
+}) {
+  const probe = link.probe;
+  const isLive = probe?.state === "live" && !!probe.timing;
+  const winnerMark = isWinner ? (
+    <span fg={C.brightGreen}>{"●"}</span>
+  ) : (
+    <span>{" "}</span>
+  );
+  const provider = (
+    <span fg={C.fg}>{padEndSafe(link.displayName, provW)}</span>
+  );
+  const lead = (
+    <>
+      <span fg={C.dim}>{"  "}</span>
+      {winnerMark}
+      <span>{" "}</span>
+      {provider}
+      <span>{"  "}</span>
+    </>
+  );
+
+  if (!isLive || !probe?.timing) {
+    // Failed / missing — keep the provider column aligned, then ✗ + dim reason.
+    return (
+      <text>
+        {lead}
+        <span fg={C.red}>{"✗  "}</span>
+        <span fg={C.red}>{shortFailureReason(probe, link.hasCredentials)}</span>
+      </text>
+    );
+  }
+
+  // Live row — full aligned columns, identical math to the leaderboard rows.
+  const t = probe.timing;
+  const barCells = timelineBarCells(t.totalMs, maxTotalMs, layout.barWidth);
+  const stages = splitStageCells(t.ttfbMs, t.ttftMs, t.totalMs, barCells);
+  const trackCells = Math.max(0, layout.barWidth - barCells);
+
+  const netMs = Math.max(0, t.ttfbMs);
+  const srvMs = Math.max(0, t.ttftMs - t.ttfbMs);
+  const strMs = Math.max(0, t.totalMs - t.ttftMs);
+  const netStr = padStartSafe(breakdownNum(netMs), STAGE_NUM_W);
+  const srvStr = padStartSafe(breakdownNum(srvMs), STAGE_NUM_W);
+  const strStr = padStartSafe(breakdownNum(strMs), STAGE_NUM_W);
+
+  // Bar LENGTH relative-to-max (comparison); bar/value COLOR absolute (health).
+  const tokColor = throughputFg(t.tokensPerSec);
+  const tokCells =
+    layout.tokWidth > 0
+      ? tokBarCells(t.tokensPerSec, maxTokPerSec, layout.tokWidth)
+      : 0;
+  const tokTrack = Math.max(0, layout.tokWidth - tokCells);
+  const tokValue = padStartSafe(`${Math.round(t.tokensPerSec)} t/s`, TOK_VALUE_COL);
+
+  return (
+    <text>
+      {lead}
+      <span fg={C.green}>{"✓  "}</span>
+      {/* TIMELINE bar — bg-on-spaces segments + dim track */}
+      {stages.network > 0 && (
+        <span bg={STAGE_BG.network}>{" ".repeat(stages.network)}</span>
+      )}
+      {stages.server > 0 && (
+        <span bg={STAGE_BG.server}>{" ".repeat(stages.server)}</span>
+      )}
+      {stages.streaming > 0 && (
+        <span bg={STAGE_BG.streaming}>{" ".repeat(stages.streaming)}</span>
+      )}
+      {trackCells > 0 && <span fg={C.dim}>{TRACK_CHAR.repeat(trackCells)}</span>}
+      <span fg={C.dim}>{"  "}</span>
+      {/* TOTAL — right-aligned, white */}
+      <span fg={C.white}>{padStartSafe(formatLatency(t.totalMs), TOTAL_COL)}</span>
+      {/* BREAKDOWN — net/srv/str, STAGE_FG-colored */}
+      {layout.showBreakdown && (
+        <>
+          <span fg={C.dim}>{"  net "}</span>
+          <span fg={STAGE_FG.network}>{netStr}</span>
+          <span fg={C.dim}>{" srv "}</span>
+          <span fg={STAGE_FG.server}>{srvStr}</span>
+          <span fg={C.dim}>{" str "}</span>
+          <span fg={STAGE_FG.streaming}>{strStr}</span>
+        </>
+      )}
+      {/* TOK/S bar — fg block on dim track, heat-colored */}
+      {layout.tokWidth > 0 && (
+        <>
+          <span fg={C.dim}>{"  "}</span>
+          {tokCells > 0 && <span fg={tokColor}>{BAR_FILL.repeat(tokCells)}</span>}
+          {tokTrack > 0 && <span fg={C.dim}>{TRACK_CHAR.repeat(tokTrack)}</span>}
+          <span fg={C.dim}>{" "}</span>
+        </>
+      )}
+      {layout.tokWidth === 0 && <span fg={C.dim}>{"  "}</span>}
+      <span fg={tokColor}>{tokValue}</span>
+    </text>
+  );
+}
+
+/** One model block in the Details tab: header + link rows + wire line. */
+function DetailModel({
+  result,
+  provW,
+  headerW,
+  layout,
+  maxTotalMs,
+  maxTokPerSec,
+  isLast,
+}: {
+  result: ProbeModelResult;
+  provW: number;
+  headerW: number;
+  layout: ProbeLayout;
+  maxTotalMs: number;
+  maxTokPerSec: number;
+  isLast: boolean;
+}) {
+  // Winner = first link that probed live+timed (the route claudish uses).
+  const winnerIdx = result.links.findIndex(
+    (l) => l.probe?.state === "live" && !!l.probe.timing,
+  );
+  const winner = winnerIdx >= 0 ? result.links[winnerIdx] : undefined;
+
+  // Header: bold model name (left) + dim routing explanation (right-aligned so
+  // the explanation hugs the right edge of the row content). headerW is the
+  // shared row-content width (capped to the terminal) computed by DetailsView.
+  const gap = Math.max(
+    2,
+    headerW - result.model.length - result.routingExplanation.length - 2,
+  );
+
+  // Wire line — only when a live winner exists; reuse its wiring.
+  const wiring = result.wiring;
+  const wireLine =
+    winner && wiring
+      ? `wire (${winner.displayName}): ${wiring.effectiveStreamFormat} · ${wiring.modelTranslator} · ${formatContextWindow(wiring.contextWindow)} ctx`
+      : "wire: —";
+
+  // ── Routing advisor ────────────────────────────────────────────────
+  // Full route: the ordered chain of providers claudish would try.
+  const routeChain = result.links.map((l) => l.displayName).join(" → ");
+  const liveLinks = result.links.filter(
+    (l) => l.probe?.state === "live" && !!l.probe.timing,
+  );
+  // Best live link on EACH axis: lowest total latency, and highest throughput.
+  // We suggest a rule if the picked provider (winner) loses on EITHER axis —
+  // "slow to finish" (latency) and "slow to stream" (tok/s) are both worth
+  // flagging, and the user asked to catch either. We pick whichever non-winner
+  // wins by the LARGER relative margin and label which axis it won on.
+  let fastestByLatency: ProbeResultLink | undefined;
+  let fastestByTput: ProbeResultLink | undefined;
+  for (const l of liveLinks) {
+    const t = l.probe!.timing!;
+    if (!fastestByLatency || t.totalMs < fastestByLatency.probe!.timing!.totalMs) {
+      fastestByLatency = l;
+    }
+    if (!fastestByTput || t.tokensPerSec > fastestByTput.probe!.timing!.tokensPerSec) {
+      fastestByTput = l;
+    }
+  }
+  const winnerT = winner?.probe?.timing;
+  // Candidate suggestions on each axis (only when a NON-winner wins that axis).
+  type Suggestion = { link: ProbeResultLink; factor: number; axis: "latency" | "throughput" };
+  const candidates: Suggestion[] = [];
+  if (winner && winnerT) {
+    if (
+      fastestByLatency &&
+      fastestByLatency !== winner &&
+      fastestByLatency.probe!.timing!.totalMs < winnerT.totalMs
+    ) {
+      candidates.push({
+        link: fastestByLatency,
+        factor: winnerT.totalMs / Math.max(1, fastestByLatency.probe!.timing!.totalMs),
+        axis: "latency",
+      });
+    }
+    if (
+      fastestByTput &&
+      fastestByTput !== winner &&
+      fastestByTput.probe!.timing!.tokensPerSec > winnerT.tokensPerSec &&
+      winnerT.tokensPerSec > 0
+    ) {
+      candidates.push({
+        link: fastestByTput,
+        factor: fastestByTput.probe!.timing!.tokensPerSec / winnerT.tokensPerSec,
+        axis: "throughput",
+      });
+    }
+  }
+  // Show the strongest suggestion (largest relative margin).
+  const suggestion = candidates.sort((a, b) => b.factor - a.factor)[0];
+  const showSuggestion = !!suggestion;
+  const ruleKey = ruleKeyForModel(result.model);
+
+  return (
+    <box flexDirection="column" marginBottom={isLast ? 0 : 1}>
+      {/* Header line */}
+      <text>
+        <span fg={C.dim}>{"  "}</span>
+        <span fg={C.cyan} attributes={A.bold}>
+          {result.model}
+        </span>
+        <span fg={C.dim}>{" ".repeat(gap)}</span>
+        <span fg={C.dim}>{result.routingExplanation}</span>
+      </text>
+      {/* One row per provider link */}
+      {result.links.map((link, i) => (
+        <DetailLinkRow
+          key={`${result.model}:${link.provider}:${i}`}
+          link={link}
+          isWinner={i === winnerIdx}
+          provW={provW}
+          layout={layout}
+          maxTotalMs={maxTotalMs}
+          maxTokPerSec={maxTokPerSec}
+        />
+      ))}
+      {/* Wire line (dim) */}
+      <text>
+        <span fg={C.dim}>{`  ${wireLine}`}</span>
+      </text>
+      {/* Routing advisor — full route + (when picked ≠ fastest) the rule to add */}
+      <text>
+        <span fg={C.dim}>{"  route: "}</span>
+        <span fg={C.fgMuted}>{routeChain || "—"}</span>
+        {winner && (
+          <>
+            <span fg={C.dim}>{"  ·  uses "}</span>
+            <span fg={C.green}>{winner.displayName}</span>
+            <span fg={C.dim}>{" (first credentialed live link)"}</span>
+          </>
+        )}
+      </text>
+      {showSuggestion && (
+        <text>
+          <span fg={C.yellow} attributes={A.bold}>{"  ⚡ "}</span>
+          <span fg={C.fg}>{suggestion.link.displayName}</span>
+          <span fg={C.green}>{` is ${suggestion.factor.toFixed(1)}× faster ${suggestion.axis === "latency" ? "end-to-end" : "throughput"}`}</span>
+          <span fg={C.dim}>
+            {suggestion.axis === "latency"
+              ? ` (${formatLatency(suggestion.link.probe!.timing!.totalMs)} vs ${formatLatency(winnerT!.totalMs)})`
+              : ` (${Math.round(suggestion.link.probe!.timing!.tokensPerSec)} vs ${Math.round(winnerT!.tokensPerSec)} t/s)`}
+          </span>
+          <span fg={C.dim}>{` — add routing: `}</span>
+          {/* link.provider IS the routing-rule provider token (xai, openrouter…). */}
+          <span fg={C.cyan}>{`"${ruleKey}": ["${suggestion.link.provider}"]`}</span>
+        </text>
+      )}
+    </box>
+  );
+}
+
+function DetailsView({
+  results,
+  layout,
+  termWidth,
+  maxTotalMs,
+  maxTokPerSec,
+}: {
+  results: ProbeModelResult[];
+  layout: ProbeLayout;
+  termWidth: number;
+  maxTotalMs: number;
+  maxTokPerSec: number;
+}) {
+  // Shared provider-name column width so every link row across every model lines
+  // up (clamped like the live view's name column).
+  const provW = Math.min(
+    22,
+    Math.max(8, ...results.flatMap((r) => r.links.map((l) => l.displayName.length))),
+  );
+  // Shared header width = the live-row content width, capped to the terminal
+  // (minus a 1-col scrollbar gutter) so the routing explanation hugs the right
+  // edge of the rows instead of running off-screen.
+  const headerW = Math.max(
+    24,
+    Math.min(detailRowWidth(provW, layout), (termWidth || 100) - 3),
+  );
+  return (
+    <box flexDirection="column">
+      {results.map((r, idx) => (
+        <DetailModel
+          key={r.model}
+          result={r}
+          provW={provW}
+          headerW={headerW}
+          layout={layout}
+          maxTotalMs={maxTotalMs}
+          maxTokPerSec={maxTokPerSec}
+          isLast={idx === results.length - 1}
+        />
+      ))}
+    </box>
+  );
+}
+
+export function ProbeApp({
+  store,
+  onQuit,
+}: {
+  store: ProbeStore;
+  onQuit?: () => void;
+}) {
   const state = useProbeStore(store);
-  const animFrame = useAnimationFrame(true);
+  const animFrame = useAnimationFrame(state.phase === "live");
   const { height: termHeight, width: termWidth } = useTerminalDimensions();
+
+  const isDone = state.phase === "done";
 
   // Ref to the native OpenTUI scrollbox. We scroll it IMPERATIVELY from the
   // keyboard handler below (rather than relying on focus routing reaching the
@@ -651,10 +1133,37 @@ export function ProbeApp({ store }: { store: ProbeStore }) {
   // inline (non-alternate-screen) mode where focus-based key delivery is unreliable.
   const listScrollRef = useRef<ScrollBoxRenderable | null>(null);
 
-  // Keyboard-driven scrolling — complements the mouse wheel (the focused
-  // scrollbox handles wheel MouseEvents itself; useMouse is enabled in
-  // probe-tui-runtime). Arrows / j-k / PgUp-PgDn / g-G also drive the box.
+  // Keyboard handler. In the "done" phase it also handles tab switching
+  // (Tab/Shift+Tab/1/2) and quit (q/Esc) — resolving the quit promise via
+  // onQuit so cli.ts can print the leaderboard to scrollback + shut down.
+  // Scrolling (arrows / j-k / PgUp-PgDn / g-G) drives the single scrollbox on
+  // BOTH tabs (its children swap by activeTab; the ref stays stable).
   useKeyboard((key) => {
+    // Quit + tab switching only matter once the interactive phase is up.
+    if (isDone) {
+      if (key.name === "q" || key.name === "escape") {
+        onQuit?.();
+        return;
+      }
+      if (key.name === "tab") {
+        // Tab / Shift+Tab toggle between the two tabs.
+        store.setActiveTab(
+          store.getState().activeTab === "leaderboard"
+            ? "details"
+            : "leaderboard",
+        );
+        return;
+      }
+      if (key.name === "1") {
+        store.setActiveTab("leaderboard");
+        return;
+      }
+      if (key.name === "2") {
+        store.setActiveTab("details");
+        return;
+      }
+    }
+
     const sb = listScrollRef.current;
     if (!sb) return;
     const page = Math.max(1, sb.viewport.height - 1);
@@ -735,35 +1244,86 @@ export function ProbeApp({ store }: { store: ProbeStore }) {
   // No live generator produced tokens → no fastest crown.
   if (fastestTokPerSec <= 0) fastestLinkId = null;
 
+  const showDetails = isDone && state.activeTab === "details";
+
   // Viewport height for the scrollable list = terminal rows minus the fixed
-  // chrome (banner + steps block + top legend + scroll hint). Floored so a
-  // short terminal can't produce a zero/negative height. The steps block is
-  // paddingY(2) + N rows. The legend is 2 dim lines + 1 rule.
-  const stepsRows = state.steps.length + (state.steps.length > 0 ? 2 : 0);
+  // chrome. In the LIVE phase that's banner + steps block + top legend + scroll
+  // hint. In the DONE phase the steps block is gone and a tab-bar row takes its
+  // place; the legend only shows on the Leaderboard tab. Floored so a short
+  // terminal can't produce a zero height.
+  // LIVE phase now uses a SINGLE compact StepLine (was N rows + paddingY).
+  const stepsRows = isDone ? 0 : state.steps.length > 0 ? 1 : 0;
+  const tabBarRows = isDone ? TAB_BAR_ROWS : 0;
+  const legendRows = showDetails ? 0 : LEGEND_ROWS;
   const listH = Math.max(
     MIN_LIST_H,
-    termHeight - BANNER_ROWS - stepsRows - LEGEND_ROWS - SCROLL_HINT_ROWS,
+    termHeight -
+      BANNER_ROWS -
+      stepsRows -
+      tabBarRows -
+      legendRows -
+      SCROLL_HINT_ROWS,
   );
 
+  // Does the scrollbox content overflow its viewport? Only then are the scroll
+  // keys meaningful — hide them otherwise so the hint doesn't advertise a
+  // no-op. The ref's content/viewport heights are populated after the first
+  // layout pass; store-/anim-driven re-renders settle this within a frame.
+  // Default to true on the first render (null ref) — better to briefly show a
+  // hint than to hide a needed one.
+  const sbForHint = listScrollRef.current;
+  const overflow = sbForHint
+    ? sbForHint.content.height > sbForHint.viewport.height
+    : true;
+
+  // Bottom hint. Scroll keys appear ONLY when content overflows. Tab-switch +
+  // quit appear in the done phase regardless (they always apply).
+  const scrollKeys = "↑↓ scroll · PgUp/PgDn page · g/G top/bottom";
+  const footerHint = isDone
+    ? "  " + (overflow ? scrollKeys + " · " : "") + "Tab/1/2 switch · q quit"
+    : "  " + (overflow ? scrollKeys : "");
+
   return (
-    <box flexDirection="column">
-      <Banner />
-      <box flexDirection="column" paddingY={1}>
-        {state.steps.map((step, i) => (
-          <StepIndicator key={`${step.name}-${i}`} step={step} />
-        ))}
+    // `key={state.phase}` forces React to discard the old subtree at the
+    // live→done flip and mount a fresh one. Without it, OpenTUI's in-place
+    // reconciliation tore the panel in inline mode when the chrome below the
+    // banner changed shape (steps block → tab bar) — the documented #1 risk of
+    // this stay-in-TUI redesign. A clean remount sidesteps the reconciliation
+    // path. The banner is wrapped in its own fixed-height box so its last
+    // (subtitle) row is always reserved regardless of the sibling below it.
+    <box key={state.phase} flexDirection="column">
+      <box flexDirection="column" height={BANNER_ROWS}>
+        <Banner />
       </box>
+
+      {/* LIVE phase: a SINGLE compact status line (the steps are sequential and
+          fast — three full rows + padding wasted vertical space). DONE phase:
+          interactive tab bar. */}
+      {isDone ? (
+        <TabBar activeTab={state.activeTab} />
+      ) : (
+        <box flexDirection="column">
+          <StepLine steps={state.steps} />
+        </box>
+      )}
 
       {groups.length > 0 ? (
         <>
-          {/* Top legend — rendered once, above the scrollable list. */}
-          <Legend rowWidth={rowWidth} />
-          {/* Native OpenTUI scrollbox — the model list scrolls WITHIN a fixed
-              viewport so a long probe run (many models) never pushes the banner
-              off-screen. Scrolled imperatively via the keyboard handler above.
-              The view starts at the TOP (first model) — all links are seeded up
-              front at a constant height, so there's no streaming tail to follow;
-              top-start matches how users read the list. */}
+          {/* The Leaderboard tab keeps the run legend; Details has its own
+              header text inside the scrollbox. Wrapped in a FIXED-HEIGHT box so
+              its cell footprint is stable frame-to-frame — an unconstrained
+              column here lets OpenTUI's inline diff bleed the scrollbox's first
+              frame up into the legend's last line (the banner had the same bug,
+              fixed the same way). */}
+          {!showDetails && (
+            <box flexDirection="column" height={LEGEND_ROWS}>
+              <Legend rowWidth={rowWidth} />
+            </box>
+          )}
+          {/* Single native OpenTUI scrollbox — its children swap by activeTab so
+              BOTH tabs scroll (wheel + keys) through one stable ref. The view
+              scrolls WITHIN a fixed viewport so a long run never pushes the
+              banner off-screen. */}
           <scrollbox
             ref={listScrollRef}
             scrollX={false}
@@ -771,24 +1331,34 @@ export function ProbeApp({ store }: { store: ProbeStore }) {
             focused={true}
             style={{ height: listH }}
           >
-            {groups.map((g, idx) => (
-              <ModelGroup
-                key={g.model}
-                model={g.model}
-                links={g.links}
-                animFrame={animFrame}
-                maxNameLen={maxNameLen}
-                rowWidth={rowWidth}
-                isLast={idx === groups.length - 1}
+            {showDetails ? (
+              <DetailsView
+                results={state.results}
                 layout={layout}
+                termWidth={termWidth}
                 maxTotalMs={maxTotalMs}
                 maxTokPerSec={maxTokPerSec}
-                fastestLinkId={fastestLinkId}
               />
-            ))}
+            ) : (
+              groups.map((g, idx) => (
+                <ModelGroup
+                  key={g.model}
+                  model={g.model}
+                  links={g.links}
+                  animFrame={animFrame}
+                  maxNameLen={maxNameLen}
+                  rowWidth={rowWidth}
+                  isLast={idx === groups.length - 1}
+                  layout={layout}
+                  maxTotalMs={maxTotalMs}
+                  maxTokPerSec={maxTokPerSec}
+                  fastestLinkId={fastestLinkId}
+                />
+              ))
+            )}
           </scrollbox>
           <text>
-            <span fg={C.dim}>{"  ↑↓ scroll · PgUp/PgDn page · g/G top/bottom"}</span>
+            <span fg={C.dim}>{footerHint}</span>
           </text>
         </>
       ) : null}
