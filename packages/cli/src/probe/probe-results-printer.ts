@@ -17,8 +17,22 @@ import {
   isFailureState,
   isReadyState,
   type ProbeResult,
+  type ProbeTiming,
 } from "../providers/probe-live.js";
 import { type KeyProvenance } from "../providers/api-key-provenance.js";
+import {
+  latencyBgAnsi,
+  LATENCY_FG_ANSI,
+  ANSI_RESET,
+  formatLatency,
+  STAGE_BG_ANSI,
+  STAGE_FG,
+  throughputFg,
+  hexToAnsiFg,
+  timelineBarCells,
+  splitStageCells,
+  tokBarCells,
+} from "../tui/theme.js";
 
 const pc = {
   reset: "\x1b[0m",
@@ -101,6 +115,213 @@ function wordWrap(text: string, maxWidth: number): string[] {
   return lines;
 }
 
+// ── Timeline + tok/s bars (static printer) ─────────────────────────
+//
+// Sub-row rendered beneath each LIVE provider row: a stacked 3-segment
+// timeline bar (shared global scale across ALL cards) + a tok/s bar (shared
+// scale, heat-colored) + the "NNN t/s" value + an optional ● for the
+// per-chain fastest. The TOTAL latency is already carried by the status-cell
+// pill, so the bars sub-row omits it. Colors come exclusively from theme.ts.
+
+const PRINTER_BAR_WIDTH = 24; // B — timeline bar cells
+const PRINTER_TOK_WIDTH = 14; // T — tok/s bar cells
+const PRINTER_TRACK = "·"; // dim idle track
+const PRINTER_BAR_FILL = "█"; // tok/s fill mark
+// Each net/srv/str breakdown number is right-aligned to STAGE_NUM_W so the inner
+// columns line up across rows (matches the live TUI: W=6 fits "21.05s").
+const STAGE_NUM_W = 6;
+const PRINTER_TOK_VALUE_W = 9; // right-aligned "99999 t/s"
+// Minimum card-inner usable width needed to fit the bars sub-row at each tier
+// (the row degrades down this ladder so it never overflows + gets ANSI-stripped).
+// These MUST equal each tier's actual RENDERED visible width — note the tok/s
+// COLUMN is always present: "  " + bar(14) + " " = 17 when shown, "  " = 2 when
+// dropped. Under-counting the 2-space placeholder is what would let a NOTOK-tier
+// row (78 wide) slip past a 76 gate and get ANSI-stripped by renderTextLine.
+//   layout:  timeline(24) + gap(2) + total(7) + [breakdown(34)] + tokCol + tokValue(9)
+//   full:    24 + 2 + 7 + 34 + 17 + 9 = 93   (breakdown + tok/s bar)
+//   no-tok:  24 + 2 + 7 + 34 +  2 + 9 = 78   (breakdown, tok/s bar dropped)
+//   minimal: 24 + 2 + 7 +  0 +  2 + 9 = 44   (timeline + total + tok value)
+const PRINTER_BARS_FULL_WIDTH = 24 + 2 + 7 + 34 + 17 + 9; // 93
+const PRINTER_BARS_NOTOK_WIDTH = 24 + 2 + 7 + 34 + 2 + 9; // 78 (drop tok/s bar)
+const PRINTER_BARS_MIN_WIDTH = 24 + 2 + 7 + 2 + 9; // 44 (timeline + total + tok value)
+
+/** Run-level shared scales for the static printer (mirror of the TUI's). */
+interface BarScales {
+  maxTotalMs: number;
+  maxTokPerSec: number;
+}
+
+/**
+ * Compute the global shared scales across every probe in every result:
+ *   maxTotalMs   = slowest live probe's totalMs, CAPPED so one genuine outlier
+ *                  (a 40s slow model, or a near-timeout link) doesn't crush the
+ *                  shared bar scale down to 1-cell stubs for everyone else.
+ *   maxTokPerSec = fastest live generator (streaming time floored to ≥50ms on
+ *                  the SCALE denominator so one artifact can't crush it).
+ *
+ * Only live probes that carry `timing` participate — truncated timeouts now have
+ * no `timing` (probe-live.ts stopped building it on a deadline-cut read), so they
+ * naturally fall out of both scales here.
+ *
+ * Outlier cap: maxTotalMs = clamp(min(rawMax, 3 * median(liveTotals))) but never
+ * below the actual SECOND-slowest live total (the floor keeps the second-slowest
+ * link visibly long even if the single slowest is a 40s outlier). With fewer than
+ * 3 live+timed links there's no meaningful median, so we just use rawMax.
+ * Defaults to 1 to avoid /0.
+ */
+function computeBarScales(results: ModelResult[]): BarScales {
+  let maxTokPerSec = 1;
+  const liveTotals: number[] = [];
+  const consider = (probe?: ProbeResult): void => {
+    if (!probe || probe.state !== "live" || !probe.timing) return;
+    const t = probe.timing;
+    liveTotals.push(t.totalMs);
+    const streamMs = Math.max(50, t.totalMs - t.ttftMs);
+    const scaledTps = t.tokens > 0 ? (t.tokens / streamMs) * 1000 : 0;
+    if (scaledTps > maxTokPerSec) maxTokPerSec = scaledTps;
+  };
+  for (const r of results) {
+    consider(r.directProbe);
+    for (const c of r.chain ?? []) consider(c.probe);
+  }
+
+  let maxTotalMs = 1;
+  if (liveTotals.length > 0) {
+    const sorted = [...liveTotals].sort((a, b) => a - b);
+    const rawMax = sorted[sorted.length - 1];
+    maxTotalMs = Math.max(1, rawMax);
+    if (sorted.length >= 3) {
+      // Median of the live totals (lower of the two middles on even counts is
+      // fine — we only need a robust center, not a textbook median).
+      const median = sorted[Math.floor((sorted.length - 1) / 2)];
+      const secondSlowest = sorted[sorted.length - 2];
+      // Cap at 3× median, but never tighter than the real second-slowest so the
+      // runner-up still reads as a near-full bar.
+      const cap = Math.max(secondSlowest, 3 * median);
+      maxTotalMs = Math.max(1, Math.min(rawMax, cap));
+    }
+  }
+
+  return { maxTotalMs, maxTokPerSec };
+}
+
+/** Right-align a plain string into `n` columns (truncate the LEFT if longer). */
+function padStartSafe(s: string, n: number): string {
+  if (s.length >= n) return s.slice(s.length - n);
+  return " ".repeat(n - s.length) + s;
+}
+
+/** Left-align an (ANSI-bearing) string into `n` VISIBLE columns. No truncation. */
+function padEnd(s: string, n: number): string {
+  const vis = visibleLength(s);
+  if (vis >= n) return s;
+  return s + " ".repeat(n - vis);
+}
+
+/**
+ * Breakdown number for one stage: bare integer ms, or formatLatency form
+ * (e.g. "3.10s") once it crosses 1000ms. Mirrors the live TUI's breakdownNum.
+ */
+function breakdownNum(ms: number): string {
+  if (ms >= 1000) return formatLatency(ms);
+  return `${Math.round(Math.max(0, ms))}`;
+}
+
+/**
+ * Build the bars sub-row body (raw ANSI) for one live probe. The caller renders
+ * it via `renderTextLine`, which strips the ANSI for width math and re-applies
+ * any zebra bg. Layout mirrors the live TUI's aligned columns:
+ *
+ *   [B timeline][2 gap][7 TOTAL]["  net "W][" srv "W][" str "W]["  " T tok/s bar][1][tok value]
+ *
+ * `usable` is the card-inner usable width; the sub-row degrades gracefully as it
+ * shrinks (drop tok/s bar → drop breakdown → timeline + value only) so it never
+ * overflows and gets ANSI-stripped by renderTextLine's truncate fallback.
+ */
+function buildBarsLine(
+  timing: ProbeTiming,
+  scales: BarScales,
+  isFastest: boolean,
+  usable: number,
+): string {
+  const t = timing;
+
+  // Degradation tiers (see PRINTER_BARS_* constants) — keyed on usable width.
+  const showTokBar = usable >= PRINTER_BARS_FULL_WIDTH;
+  const showBreakdown =
+    usable >= PRINTER_BARS_FULL_WIDTH || usable >= PRINTER_BARS_NOTOK_WIDTH;
+
+  const barCells = timelineBarCells(
+    t.totalMs,
+    scales.maxTotalMs,
+    PRINTER_BAR_WIDTH,
+  );
+  const stages = splitStageCells(t.ttfbMs, t.ttftMs, t.totalMs, barCells);
+  const trackCells = Math.max(0, PRINTER_BAR_WIDTH - barCells);
+
+  // Timeline: bg-on-spaces segments (the bg change IS the boundary) + dim track.
+  let timeline = "";
+  if (stages.network > 0) {
+    timeline += `${STAGE_BG_ANSI.network}${" ".repeat(stages.network)}${ANSI_RESET}`;
+  }
+  if (stages.server > 0) {
+    timeline += `${STAGE_BG_ANSI.server}${" ".repeat(stages.server)}${ANSI_RESET}`;
+  }
+  if (stages.streaming > 0) {
+    timeline += `${STAGE_BG_ANSI.streaming}${" ".repeat(stages.streaming)}${ANSI_RESET}`;
+  }
+  if (trackCells > 0) {
+    timeline += `${pc.dim}${PRINTER_TRACK.repeat(trackCells)}${pc.reset}`;
+  }
+
+  // TOTAL — right-aligned, white (mirrors the TUI's TOTAL column).
+  const total = `${LATENCY_FG_ANSI}${padStartSafe(formatLatency(t.totalMs), 7)}${pc.reset}`;
+
+  // BREAKDOWN — net/srv/str, each number right-aligned to STAGE_NUM_W and
+  // STAGE_FG-colored, so values line up down the column across rows.
+  let breakdown = "";
+  if (showBreakdown) {
+    const netMs = Math.max(0, t.ttfbMs);
+    const srvMs = Math.max(0, t.ttftMs - t.ttfbMs);
+    const strMs = Math.max(0, t.totalMs - t.ttftMs);
+    const netFg = hexToAnsiFg(STAGE_FG.network);
+    const srvFg = hexToAnsiFg(STAGE_FG.server);
+    const strFg = hexToAnsiFg(STAGE_FG.streaming);
+    breakdown =
+      `${pc.dim}  net ${pc.reset}${netFg}${padStartSafe(breakdownNum(netMs), STAGE_NUM_W)}${pc.reset}` +
+      `${pc.dim} srv ${pc.reset}${srvFg}${padStartSafe(breakdownNum(srvMs), STAGE_NUM_W)}${pc.reset}` +
+      `${pc.dim} str ${pc.reset}${strFg}${padStartSafe(breakdownNum(strMs), STAGE_NUM_W)}${pc.reset}`;
+  }
+
+  // Tok/s bar: fg █ on dim · track, heat-colored; the value uses the same color.
+  const ratio = scales.maxTokPerSec > 0 ? t.tokensPerSec / scales.maxTokPerSec : 0;
+  const tokFg = hexToAnsiFg(throughputFg(ratio));
+  let tokBar = "";
+  if (showTokBar) {
+    const tokCells = tokBarCells(
+      t.tokensPerSec,
+      scales.maxTokPerSec,
+      PRINTER_TOK_WIDTH,
+    );
+    const tokTrack = Math.max(0, PRINTER_TOK_WIDTH - tokCells);
+    if (tokCells > 0) {
+      tokBar += `${tokFg}${PRINTER_BAR_FILL.repeat(tokCells)}${pc.reset}`;
+    }
+    if (tokTrack > 0) {
+      tokBar += `${pc.dim}${PRINTER_TRACK.repeat(tokTrack)}${pc.reset}`;
+    }
+    tokBar = `  ${tokBar} `;
+  } else {
+    tokBar = "  ";
+  }
+
+  // Tok/s value — right-aligned to a fixed width so values line up down the column.
+  const tokValue = `${tokFg}${padStartSafe(`${Math.round(t.tokensPerSec)} t/s`, PRINTER_TOK_VALUE_W)}${pc.reset}`;
+  const crown = isFastest ? ` ${pc.brightGreen}●${pc.reset}` : "";
+
+  return `${timeline}  ${total}${breakdown}${tokBar}${tokValue}${crown}`;
+}
+
 export interface ChainEntry {
   provider: string;
   displayName: string;
@@ -157,7 +378,11 @@ function shortStatusLabel(probe: ProbeResult | undefined, hasCreds: boolean, hin
   }
   switch (probe.state) {
     case "live":
-      return `${pc.green}✓ ${probe.latencyMs}ms${pc.reset}`;
+      // "✓ " stays green; the latency gets a bucketed background pill
+      // (green/yellow/orange/red by threshold) so fast vs slow reads at a glance.
+      // Value is human-formatted (399ms / 14.34s). The trailing reset hands
+      // styling back to any row-level tint (see tintRow).
+      return `${pc.green}✓ ${LATENCY_FG_ANSI}${latencyBgAnsi(probe.latencyMs)} ${formatLatency(probe.latencyMs)} ${pc.reset}`;
     case "key-missing":
       return `${pc.dim}${pc.red}○ missing${pc.reset}`;
     case "auth-failed":
@@ -333,9 +558,18 @@ interface RowData {
   fastest?: boolean;
   /** True if this is the slowest live provider in the chain (red bg) */
   slowest?: boolean;
+  /**
+   * Timing for the bars sub-row (timeline + breakdown + tok/s); only present on
+   * live rows. The line itself is built lazily in `renderCard` once the final
+   * card width is known so it can degrade gracefully instead of overflowing.
+   */
+  barsTiming?: ProbeTiming;
 }
 
-function buildRowData(result: ModelResult, isLiveProbe: boolean): RowData[] {
+function buildRowData(
+  result: ModelResult,
+  isLiveProbe: boolean,
+): RowData[] {
   // Find fastest and slowest live providers by latency.
   // Only highlight if there are 2+ live providers (no point marking 1 as both).
   let fastestIdx = -1;
@@ -375,6 +609,13 @@ function buildRowData(result: ModelResult, isLiveProbe: boolean): RowData[] {
       errorDetail = stripAnsi(entry.probe.errorMessage).replace(/\s+/g, " ").trim();
     }
 
+    // Bars sub-row timing for a live probe; the line is built later (renderCard)
+    // once the card width is known.
+    const barsTiming =
+      entry.probe?.state === "live" && entry.probe.timing
+        ? entry.probe.timing
+        : undefined;
+
     return {
       num: `${i + 1}`,
       provider: entry.displayName,
@@ -383,6 +624,7 @@ function buildRowData(result: ModelResult, isLiveProbe: boolean): RowData[] {
       errorDetail,
       fastest: isFastest,
       slowest: isSlowest,
+      barsTiming,
     };
   });
 }
@@ -402,6 +644,8 @@ function buildDirectRowData(result: ModelResult): RowData[] {
   if (probe && isFailureState(probe.state) && probe.errorMessage) {
     errorDetail = stripAnsi(probe.errorMessage).replace(/\s+/g, " ").trim();
   }
+  const barsTiming =
+    probe?.state === "live" && probe.timing ? probe.timing : undefined;
   return [
     {
       num: "1",
@@ -409,6 +653,7 @@ function buildDirectRowData(result: ModelResult): RowData[] {
       spec: `${result.nativeProvider}@${result.model}`,
       status,
       errorDetail,
+      barsTiming,
     },
   ];
 }
@@ -579,6 +824,7 @@ function renderCard(
   isLiveProbe: boolean,
   w: Writer,
   width: number,
+  scales: BarScales,
   directKeyVar?: string,
 ): void {
   const layout = buildCardLayout(result, isLiveProbe, directKeyVar);
@@ -623,6 +869,22 @@ function renderCard(
       r.status,
     ];
     w(renderRow(cells, widths, width, bg) + "\n");
+
+    // Bars sub-row beneath a live provider row (timeline + breakdown + tok/s).
+    // Indented to read as a child of the row. Built here (not at row-build time)
+    // so it can size itself against the final card width and degrade gracefully:
+    // if the card is too narrow the bars are dropped entirely and the status-cell
+    // latency pill remains the fallback.
+    if (r.barsTiming) {
+      const innerUsable = width - 2 - CARD_PADDING_LEFT - CARD_PADDING_RIGHT;
+      const barsIndent = 4; // align with the error sub-row indent
+      const barsUsable = innerUsable - barsIndent;
+      if (barsUsable >= PRINTER_BARS_MIN_WIDTH) {
+        const barsLine = buildBarsLine(r.barsTiming, scales, false, barsUsable);
+        const body = `${" ".repeat(barsIndent)}${barsLine}`;
+        w(renderTextLine(body, width, bg) + "\n");
+      }
+    }
 
     if (r.errorDetail) {
       // Render the error as a full-width sub-row (or rows) beneath the
@@ -683,6 +945,217 @@ function renderCard(
   w(renderBorderBottom(width) + "\n");
 }
 
+/**
+ * Stage + tok/s legend, printed once above the cards (only when bars are shown,
+ * i.e. a live probe with at least one timed result). Mirrors the TUI legend.
+ */
+function renderLegend(w: Writer): void {
+  const net = STAGE_BG_ANSI.network;
+  const srv = STAGE_BG_ANSI.server;
+  const str = STAGE_BG_ANSI.streaming;
+  const netFg = hexToAnsiFg(STAGE_FG.network);
+  const srvFg = hexToAnsiFg(STAGE_FG.server);
+  const strFg = hexToAnsiFg(STAGE_FG.streaming);
+  w(
+    `  ${pc.dim}Stages:${pc.reset}  ` +
+      `${net}  ${ANSI_RESET}${netFg} network${pc.reset}   ` +
+      `${srv}  ${ANSI_RESET}${srvFg} server${pc.reset}   ` +
+      `${str}  ${ANSI_RESET}${strFg} streaming${pc.reset}   ` +
+      `${pc.dim}·· idle${pc.reset}\n`,
+  );
+  w(
+    `  ${pc.dim}bar length = total time, shared scale (slowest = full bar)  ·  ` +
+      `tok/s scaled to fastest${pc.reset}\n`,
+  );
+  w("\n");
+}
+
+// ── Leaderboard ────────────────────────────────────────────────────
+//
+// One row per MODEL, comparing the route claudish would actually take (the
+// representative entry — first chain link that came back live+timed, or the
+// direct probe). Sorted fastest→slowest by totalMs on a SHARED-SCALE timeline
+// bar so models read one-to-one at a glance. Rendered as a borderless section
+// above the detailed cards. No per-row bg slab — rank + bar length carry order.
+
+interface LeaderRow {
+  model: string;
+  /** Representative provider's display name (the route that would be used). */
+  provider: string;
+  /** Live+timed timing for the representative entry; undefined = unavailable. */
+  timing?: ProbeTiming;
+}
+
+/**
+ * Pick the representative entry for a model: the first chain link that probed
+ * live AND carried timing (the route claudish would actually use), else the
+ * direct probe if it's live+timed. Returns undefined timing for models with no
+ * usable route so they can be listed dim as "unavailable".
+ */
+function pickRepresentative(result: ModelResult): LeaderRow {
+  for (const entry of result.chain ?? []) {
+    if (entry.probe?.state === "live" && entry.probe.timing) {
+      return { model: result.model, provider: entry.displayName, timing: entry.probe.timing };
+    }
+  }
+  const direct = result.directProbe;
+  if (direct?.state === "live" && direct.timing) {
+    return { model: result.model, provider: result.nativeProvider, timing: direct.timing };
+  }
+  return { model: result.model, provider: result.nativeProvider };
+}
+
+/**
+ * Render the leaderboard section: title, column header, one aligned row per
+ * model (live rows sorted fastest→slowest, then unavailable rows dim), bottom
+ * rule. `maxWidth` is the terminal-clamped width cap; the leaderboard sizes
+ * itself to its own full-column content within that cap and degrades gracefully
+ * as it narrows (drop tok/s bar → drop breakdown) just like the card sub-rows.
+ *
+ * Note: this is sized to the TERMINAL (not the per-card content width) so the
+ * net/srv/str breakdown + tok/s bar render whenever the terminal can fit them —
+ * the cards size to their own (often short) content and would needlessly cramp
+ * the headline comparison.
+ */
+function renderLeaderboard(
+  results: ModelResult[],
+  scales: BarScales,
+  maxWidth: number,
+  w: Writer,
+): void {
+  const reps = results.map(pickRepresentative);
+  const live = reps
+    .filter((r) => r.timing)
+    .sort((a, b) => a.timing!.totalMs - b.timing!.totalMs);
+  const unavailable = reps.filter((r) => !r.timing);
+  if (live.length === 0) return; // nothing to rank
+
+  // Name column: widest model name (clamped so a single long name can't blow
+  // out the row). All rows share it so the bars start at the same x.
+  const allNames = reps.map((r) => r.model);
+  const rawNameW = Math.max(5, ...allNames.map((n) => n.length));
+  const nameW = Math.min(rawNameW, 28);
+
+  // Rank column fits the largest index.
+  const rankW = Math.max(1, String(live.length).length);
+
+  // Margin + fixed lead columns (mirrors the card sub-row layout to the right
+  // of the name): [2 margin][rank][1][● 1][1][name][1][B timeline][2][TOTAL 7]
+  //   …then breakdown / tok bar / tok value as width allows.
+  const MARGIN = 2;
+  const leadW = MARGIN + rankW + 1 + 1 + 1 + nameW + 1; // up to start of timeline
+
+  // Leaderboard column widths from the timeline bar onward. Unlike the cards'
+  // bars sub-row, the leaderboard's net/srv/str numbers are UNLABELED in the
+  // data rows (the labels live in the column header), so its breakdown column is
+  // narrower (22) than the cards' labeled one (34). Each constant is the tier's
+  // true rendered visible width so the section sizes itself exactly + the bottom
+  // rule matches the table.
+  const LB_TIMELINE = PRINTER_BAR_WIDTH + 2 + 7; // bar + gap + TOTAL
+  const LB_BREAKDOWN = 2 + STAGE_NUM_W + 1 + STAGE_NUM_W + 1 + STAGE_NUM_W; // 22
+  const LB_TOKBAR = 2 + PRINTER_TOK_WIDTH + 1; // 17 ("  " + bar + " ")
+  const LB_TOK_VALUE = PRINTER_TOK_VALUE_W; // 9
+  const LB_FULL = LB_TIMELINE + LB_BREAKDOWN + LB_TOKBAR + LB_TOK_VALUE; // 81
+  const LB_NOTOK = LB_TIMELINE + LB_BREAKDOWN + 2 + LB_TOK_VALUE; // 66
+
+  // Size to full columns when the terminal allows, else clamp to terminal.
+  const width = Math.min(maxWidth, leadW + LB_FULL);
+  // Width available from the timeline bar onward.
+  const barsBudget = Math.max(0, width - leadW);
+
+  const showTokBar = barsBudget >= LB_FULL;
+  const showBreakdown = barsBudget >= LB_NOTOK;
+
+  const margin = " ".repeat(MARGIN);
+  const netFg = hexToAnsiFg(STAGE_FG.network);
+  const srvFg = hexToAnsiFg(STAGE_FG.server);
+  const strFg = hexToAnsiFg(STAGE_FG.streaming);
+
+  // ── Title ──
+  w(`${margin}${pc.bold}${pc.cyan}Leaderboard${pc.reset}${pc.dim} — fastest model first${pc.reset}\n`);
+
+  // ── Column header (dim), aligned to the data rows. The data-row lead-in is
+  //    `${rankStr} ${dot} ` = rankW + 3 visible cols before the name. ──
+  const rankHdr = " ".repeat(rankW) + "   "; // rank + 3 (gap + dot slot + gap)
+  const nameHdr = padEnd(`${pc.dim}MODEL${pc.reset}`, nameW);
+  let header = `${margin}${rankHdr}${nameHdr} ${pc.dim}${padEnd("TIMELINE", PRINTER_BAR_WIDTH)}${pc.reset}  ${pc.dim}${padStartSafe("TOTAL", 7)}${pc.reset}`;
+  if (showBreakdown) {
+    header += `${pc.dim}  ${padEnd("net", STAGE_NUM_W)} ${padEnd("srv", STAGE_NUM_W)} ${padEnd("str", STAGE_NUM_W)}${pc.reset}`;
+  }
+  if (showTokBar) {
+    header += `${pc.dim}  ${padEnd("tok/s", PRINTER_TOK_WIDTH)} ${padStartSafe("", PRINTER_TOK_VALUE_W)}${pc.reset}`;
+  } else {
+    header += `${pc.dim}  ${padStartSafe("tok/s", PRINTER_TOK_VALUE_W)}${pc.reset}`;
+  }
+  w(header + "\n");
+
+  // ── Data rows (fastest first) ──
+  live.forEach((row, idx) => {
+    const t = row.timing!;
+    const isFastest = idx === 0;
+    const rankStr = padStartSafe(String(idx + 1), rankW);
+    const dot = isFastest ? `${pc.brightGreen}●${pc.reset}` : " ";
+    const name = padEnd(`${pc.bold}${truncate(row.model, nameW)}${pc.reset}`, nameW);
+
+    // Timeline bar — shared scale, bg-on-spaces segments + dim track.
+    const barCells = timelineBarCells(t.totalMs, scales.maxTotalMs, PRINTER_BAR_WIDTH);
+    const stages = splitStageCells(t.ttfbMs, t.ttftMs, t.totalMs, barCells);
+    const trackCells = Math.max(0, PRINTER_BAR_WIDTH - barCells);
+    let timeline = "";
+    if (stages.network > 0) timeline += `${STAGE_BG_ANSI.network}${" ".repeat(stages.network)}${ANSI_RESET}`;
+    if (stages.server > 0) timeline += `${STAGE_BG_ANSI.server}${" ".repeat(stages.server)}${ANSI_RESET}`;
+    if (stages.streaming > 0) timeline += `${STAGE_BG_ANSI.streaming}${" ".repeat(stages.streaming)}${ANSI_RESET}`;
+    if (trackCells > 0) timeline += `${pc.dim}${PRINTER_TRACK.repeat(trackCells)}${pc.reset}`;
+
+    const total = `${LATENCY_FG_ANSI}${padStartSafe(formatLatency(t.totalMs), 7)}${pc.reset}`;
+
+    let breakdown = "";
+    if (showBreakdown) {
+      const netMs = Math.max(0, t.ttfbMs);
+      const srvMs = Math.max(0, t.ttftMs - t.ttfbMs);
+      const strMs = Math.max(0, t.totalMs - t.ttftMs);
+      breakdown =
+        `  ${netFg}${padStartSafe(breakdownNum(netMs), STAGE_NUM_W)}${pc.reset}` +
+        ` ${srvFg}${padStartSafe(breakdownNum(srvMs), STAGE_NUM_W)}${pc.reset}` +
+        ` ${strFg}${padStartSafe(breakdownNum(strMs), STAGE_NUM_W)}${pc.reset}`;
+    }
+
+    const ratio = scales.maxTokPerSec > 0 ? t.tokensPerSec / scales.maxTokPerSec : 0;
+    const tokFg = hexToAnsiFg(throughputFg(ratio));
+    let tokBar = "  ";
+    if (showTokBar) {
+      const tokCells = tokBarCells(t.tokensPerSec, scales.maxTokPerSec, PRINTER_TOK_WIDTH);
+      const tokTrack = Math.max(0, PRINTER_TOK_WIDTH - tokCells);
+      let bar = "";
+      if (tokCells > 0) bar += `${tokFg}${PRINTER_BAR_FILL.repeat(tokCells)}${pc.reset}`;
+      if (tokTrack > 0) bar += `${pc.dim}${PRINTER_TRACK.repeat(tokTrack)}${pc.reset}`;
+      tokBar = `  ${bar} `;
+    }
+    const tokValue = `${tokFg}${padStartSafe(`${Math.round(t.tokensPerSec)} t/s`, PRINTER_TOK_VALUE_W)}${pc.reset}`;
+
+    w(`${margin}${rankStr} ${dot} ${name} ${timeline}  ${total}${breakdown}${tokBar}${tokValue}\n`);
+  });
+
+  // ── Unavailable models — dim, no bar ──
+  for (const row of unavailable) {
+    const rankStr = " ".repeat(rankW);
+    const name = padEnd(`${pc.dim}${truncate(row.model, nameW)}${pc.reset}`, nameW);
+    w(`${margin}${rankStr}   ${name} ${pc.dim}— no live route${pc.reset}\n`);
+  }
+
+  // ── Bottom rule — matches the ACTUAL rendered data-row width (not the
+  //    card-calibrated `width` budget), so it underlines the table exactly. ──
+  const rowVis =
+    (leadW - MARGIN) + // rank + dot + name + the space before the timeline
+    LB_TIMELINE +
+    (showBreakdown ? LB_BREAKDOWN : 0) +
+    (showTokBar ? LB_TOKBAR : 2) +
+    LB_TOK_VALUE;
+  const ruleW = Math.max(10, rowVis);
+  w(`${margin}${pc.dim}${"─".repeat(ruleW)}${pc.reset}\n`);
+  w("\n");
+}
+
 export function printProbeResults(
   results: ModelResult[],
   isLiveProbe: boolean,
@@ -691,8 +1164,31 @@ export function printProbeResults(
 
   w("\n");
 
-  // Pass 1: compute required width for each card.
-  const requiredWidths = results.map((r) => computeRequiredWidth(r, isLiveProbe));
+  // Run-level shared scales for the bars, computed once across ALL cards so
+  // the slowest probe in the whole run gets the longest timeline bar and the
+  // fastest generator gets the longest tok/s bar.
+  const scales = computeBarScales(results);
+
+  // Has any live probe carried timing? Only then is the legend meaningful.
+  const anyTimedLive = results.some(
+    (r) =>
+      r.directProbe?.state === "live" && r.directProbe.timing !== undefined,
+  ) ||
+    results.some((r) =>
+      (r.chain ?? []).some(
+        (c) => c.probe?.state === "live" && c.probe.timing !== undefined,
+      ),
+    );
+
+  if (isLiveProbe && anyTimedLive) {
+    renderLegend(w);
+  }
+
+  // Pass 1: compute required width for each card. Done before the leaderboard so
+  // it can share the exact same width (and shared scale) as the cards below it.
+  const requiredWidths = results.map((r) =>
+    computeRequiredWidth(r, isLiveProbe),
+  );
 
   // Pick the global width: the max required width, clamped to the terminal.
   const termCols = process.stderr.columns ?? process.stdout.columns ?? 100;
@@ -703,9 +1199,18 @@ export function printProbeResults(
   );
   if (globalWidth > maxAllowed) globalWidth = maxAllowed;
 
+  // Leaderboard — headline one-row-per-model comparison, fastest first, on the
+  // shared scale. Same gate as the legend (only meaningful when something is
+  // live+timed). Rendered above the detailed cards. Sized to the TERMINAL
+  // (maxAllowed), not the per-card content width, so the breakdown + tok/s bar
+  // show whenever the terminal can fit them.
+  if (isLiveProbe && anyTimedLive) {
+    renderLeaderboard(results, scales, maxAllowed, w);
+  }
+
   // Pass 2: render each card with the shared width so borders align.
   for (const result of results) {
-    renderCard(result, isLiveProbe, w, globalWidth);
+    renderCard(result, isLiveProbe, w, globalWidth, scales);
     w("\n");
   }
 

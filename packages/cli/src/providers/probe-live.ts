@@ -25,11 +25,33 @@ export type ProbeState =
 
 export interface ProbeResult {
   state: ProbeState;
+  /** Total wall-clock from request start to finished reading the response. */
   latencyMs: number;
   httpStatus?: number;
   errorMessage?: string;
   /** Hint shown after the error message (e.g. "run: claudish login gemini"). */
   actionHint?: string;
+  /**
+   * Granular timing breakdown, present on successful ("live") probes. The three
+   * stages are sequential and sum to ~latencyMs:
+   *   network   = ttfbMs                 (connect + proxy + provider accept)
+   *   server    = ttftMs - ttfbMs        (provider thinking before first token)
+   *   streaming = latencyMs - ttftMs     (token generation)
+   */
+  timing?: ProbeTiming;
+}
+
+export interface ProbeTiming {
+  /** Time to response headers (ms from request start). */
+  ttfbMs: number;
+  /** Time to first content token (ms from request start). */
+  ttftMs: number;
+  /** Time reading the full (capped) response (ms from request start) = total. */
+  totalMs: number;
+  /** Output tokens observed in the streamed response. */
+  tokens: number;
+  /** Streaming throughput = tokens / (streaming seconds). 0 if unmeasurable. */
+  tokensPerSec: number;
 }
 
 /**
@@ -40,8 +62,11 @@ export interface ProbeResult {
  * as "skipped".
  */
 const OAUTH_PROVIDERS = new Set(["vertex", "gemini-codeassist"]);
-const PROBE_PROMPT = "ping";
-const PROBE_MAX_TOKENS = 1;
+// Ask for a short paragraph so we can sample streaming throughput (tokens/sec).
+// Capped small so probes stay quick (~0.3-1s of generation for most models)
+// while still giving a stable tok/s estimate.
+const PROBE_PROMPT = "Count from one to twenty in words, one per line.";
+const PROBE_MAX_TOKENS = 64;
 
 export interface ProbeLinkInput {
   provider: string;
@@ -96,22 +121,45 @@ export async function probeLink(
     return { state: "network-error", latencyMs, errorMessage: msg };
   }
 
-  const latencyMs = Date.now() - startedAt;
+  // TTFB: response headers are back. Stages before this are network/connect +
+  // proxy + provider accepting the request.
+  const ttfbMs = Date.now() - startedAt;
 
   if (!response.ok) {
     const body = await safeReadBody(response);
     return annotateOAuthHint(
-      classifyHttpError(response.status, body, latencyMs),
+      classifyHttpError(response.status, body, ttfbMs),
       link.provider,
       isOAuth
     );
   }
 
-  const streamResult = await consumeProbeStream(response, timeoutMs);
+  const streamResult = await consumeProbeStream(response, timeoutMs, startedAt);
+  const totalMs = Date.now() - startedAt;
+
+  // Build the granular timing only for a successful read. ttftMs/tokens come
+  // from the stream consumer; derive streaming time + throughput here.
+  let timing: ProbeTiming | undefined;
+  if (
+    streamResult.state === "live" &&
+    streamResult.ttftMs !== undefined &&
+    !streamResult.truncated
+  ) {
+    const ttftMs = streamResult.ttftMs;
+    const tokens = streamResult.tokens ?? 0;
+    const streamMs = Math.max(0, totalMs - ttftMs);
+    const tokensPerSec = streamMs > 0 && tokens > 0 ? (tokens / streamMs) * 1000 : 0;
+    timing = { ttfbMs, ttftMs, totalMs, tokens, tokensPerSec };
+  }
+
+  // Strip the internal stream-only fields (ttftMs/tokens/truncated) before
+  // returning the public ProbeResult; the surviving data lives on `timing`.
+  const { ttftMs: _ttft, tokens: _tok, truncated: _trunc, ...rest } = streamResult;
   return annotateOAuthHint(
     {
-      ...streamResult,
-      latencyMs: Date.now() - startedAt,
+      ...rest,
+      latencyMs: totalMs,
+      timing,
     },
     link.provider,
     isOAuth
@@ -234,10 +282,23 @@ function extractErrorMessage(body: string): string | undefined {
  * We don't accumulate the full response — a single valid data chunk is proof
  * that the entire stack (auth, routing, adapter, transport, parser) works.
  */
+/** Internal stream result — carries the extra timing fields that probeLink
+ *  folds into ProbeResult.timing. Not part of the public ProbeResult. */
+type StreamResult = Omit<ProbeResult, "latencyMs" | "timing"> & {
+  /** ms from request start to first content token (only on "live"). */
+  ttftMs?: number;
+  /** output tokens observed (only on "live"). */
+  tokens?: number;
+  /** True when the read hit the deadline before the stream closed — totalMs is
+   *  the timeout cap, not a real completion, so timing must be omitted. */
+  truncated?: boolean;
+};
+
 async function consumeProbeStream(
   response: Response,
-  timeoutMs: number
-): Promise<Omit<ProbeResult, "latencyMs">> {
+  timeoutMs: number,
+  startedAt: number
+): Promise<StreamResult> {
   const body = response.body;
   if (!body) {
     return { state: "error", errorMessage: "empty response body" };
@@ -248,10 +309,22 @@ async function consumeProbeStream(
   let buffered = "";
   const deadline = Date.now() + timeoutMs;
 
+  // Throughput instrumentation. Unlike before, we now read the FULL (capped)
+  // stream so we can measure tokens/sec — we don't bail at the first token.
+  let ttftMs: number | undefined;
+  let sawContent = false;
+  let textChars = 0; // accumulated streamed text length (token estimate fallback)
+  let reportedTokens: number | undefined; // exact count from usage, if provided
+  let errorVerdict: StreamResult | null = null;
+  let completed = false; // true when the stream closed cleanly (not deadline-truncated)
+
   try {
     while (Date.now() < deadline) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        completed = true;
+        break;
+      }
       buffered += decoder.decode(value, { stream: true });
 
       const events = buffered.split("\n\n");
@@ -259,34 +332,105 @@ async function consumeProbeStream(
 
       for (const event of events) {
         const verdict = interpretSseEvent(event);
-        if (verdict === "live") {
-          try {
-            await reader.cancel();
-          } catch {
-            // ignore
-          }
-          return { state: "live" };
+        if (verdict && typeof verdict === "object" && verdict.state !== "live") {
+          // A hard error event mid-stream — surface it immediately.
+          errorVerdict = verdict;
+          break;
         }
-        if (verdict && verdict.state !== "live") {
-          try {
-            await reader.cancel();
-          } catch {
-            // ignore
-          }
-          return verdict;
+        // Token accounting from the parsed event.
+        const acct = accountStreamEvent(event);
+        if (acct.contentDelta) {
+          if (ttftMs === undefined) ttftMs = Date.now() - startedAt;
+          sawContent = true;
         }
+        if (acct.textChars) textChars += acct.textChars;
+        if (acct.outputTokens !== undefined) reportedTokens = acct.outputTokens;
       }
+      if (errorVerdict) break;
     }
   } catch (e: any) {
-    return {
-      state: "network-error",
-      errorMessage: String(e?.message || e),
-    };
+    // If we already saw content, a mid-stream read error is non-fatal — the
+    // link IS live; we just stop measuring. Otherwise it's a real failure.
+    if (!sawContent) {
+      return { state: "network-error", errorMessage: String(e?.message || e) };
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
   }
 
+  if (errorVerdict) return errorVerdict;
+
+  if (sawContent) {
+    // Prefer the provider-reported token count; otherwise estimate from text
+    // length (~4 chars/token is the common rough heuristic).
+    const tokens = reportedTokens ?? Math.max(1, Math.round(textChars / 4));
+    // The link IS live (it produced tokens). But if we hit the deadline before
+    // the stream closed, totalMs == the timeout cap, NOT a real completion time
+    // — building timing from it would poison the shared bar scale with a bogus
+    // 40s "slowest". Mark it truncated so probeLink omits the timing breakdown.
+    return { state: "live", ttftMs, tokens, truncated: !completed };
+  }
+
+  return { state: "error", errorMessage: "stream ended without content" };
+}
+
+/**
+ * Token-accounting view of one SSE event (Claude `/v1/messages` format — the
+ * proxy normalizes every provider to this). Returns whether the event carried
+ * a content delta (for TTFT), how much text it added (token estimate), and any
+ * exact `output_tokens` usage figure if the provider reported one.
+ */
+function accountStreamEvent(rawEvent: string): {
+  contentDelta: boolean;
+  textChars: number;
+  outputTokens?: number;
+} {
+  let dataPayload = "";
+  for (const line of rawEvent.split("\n")) {
+    if (line.startsWith("data:")) dataPayload += line.slice(5).trim();
+  }
+  if (!dataPayload || dataPayload === "[DONE]") {
+    return { contentDelta: false, textChars: 0 };
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(dataPayload);
+  } catch {
+    return { contentDelta: false, textChars: 0 };
+  }
+
+  let textChars = 0;
+  let contentDelta = false;
+
+  // Claude content_block_delta: { delta: { type: "text_delta", text: "..." } }
+  const text =
+    parsed?.delta?.text ??
+    (Array.isArray(parsed?.choices) ? parsed.choices[0]?.delta?.content : undefined);
+  if (typeof text === "string" && text.length > 0) {
+    contentDelta = true;
+    textChars = text.length;
+  } else if (
+    parsed?.type === "content_block_delta" ||
+    parsed?.type === "content_block_start"
+  ) {
+    contentDelta = true;
+  }
+
+  // Exact usage: Claude reports cumulative output_tokens on message_delta /
+  // message_start.usage; OpenAI-shaped streams put it on a trailing usage chunk.
+  const outputTokens =
+    parsed?.usage?.output_tokens ??
+    parsed?.message?.usage?.output_tokens ??
+    parsed?.usage?.completion_tokens;
+
   return {
-    state: "error",
-    errorMessage: "stream ended without content",
+    contentDelta,
+    textChars,
+    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
   };
 }
 

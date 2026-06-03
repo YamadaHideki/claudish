@@ -1571,7 +1571,11 @@ async function probeModelRouting(
         }));
 
         if (result.state === "live") {
-          updateLink(link.id, { status: "live", endTime: Date.now() });
+          updateLink(link.id, {
+            status: "live",
+            endTime: Date.now(),
+            timing: result.timing,
+          });
         } else {
           updateLink(link.id, {
             status: "failed",

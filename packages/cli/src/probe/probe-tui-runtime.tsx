@@ -24,7 +24,13 @@ export async function startProbeTui(
     // Inline rendering — do NOT take over the full screen. This lets the
     // final probe results persist in the scrollback after shutdown.
     useAlternateScreen: false,
-    useMouse: false,
+    // Mouse tracking ON so the scroll wheel drives the model-list scrollbox.
+    // The scrollbox (focused) consumes wheel MouseEvents via its built-in
+    // onMouseEvent. Trade-off accepted: while the probe is LIVE, the wheel
+    // scrolls the list instead of the terminal's native scrollback; once the
+    // TUI exits and renderer.destroy() disables mouse reporting, native
+    // scrollback is restored (the final static results stay in scrollback).
+    useMouse: true,
     exitOnCtrlC: true,
   });
 
