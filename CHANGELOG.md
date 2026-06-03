@@ -2,6 +2,24 @@
 
 All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
+## [7.4.0] - 2026-06-03
+
+### Bug Fixes
+
+- route `internal` to native Claude Code passthrough *(probe)* ([`7ac5e20`](https://github.com/MadAppGang/claudish/commit/7ac5e20258703b6da6f2ed8b4098faaab192ce56))
+
+### Documentation
+
+- update CHANGELOG.md for v7.3.0([`fd6fbba`](https://github.com/MadAppGang/claudish/commit/fd6fbba738ef7e3e65de640f8183d8316194e83c))
+
+### New Features
+
+- add Leaderboard (winners) tab, clean exit *(probe)* ([`9887586`](https://github.com/MadAppGang/claudish/commit/988758681b98cf99d0f085a06b81504e58d01474))
+
+### Other Changes
+
+- release v7.4.0 — probe Leaderboard tab + internal native route([`f5518cf`](https://github.com/MadAppGang/claudish/commit/f5518cf7d9054c2b7e1ab49aa9961a99c07edba3))
+
 ## [7.3.0] - 2026-06-03
 
 ### Bug Fixes
