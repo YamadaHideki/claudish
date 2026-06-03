@@ -1036,14 +1036,23 @@ function renderLeaderboard(
   const rawNameW = Math.max(5, ...allNames.map((n) => n.length));
   const nameW = Math.min(rawNameW, 28);
 
+  // Provider column: the route claudish would actually take for each model
+  // (the representative entry's display name). Dim, sits between the name and
+  // the timeline bar so you can read "which model, via which provider" at a
+  // glance. Clamped like the name column. The literal "PROVIDER" header sets a
+  // 8-char floor so the column never narrower than its own label.
+  const allProviders = reps.map((r) => r.provider);
+  const rawProvW = Math.max(8, ...allProviders.map((p) => p.length));
+  const provW = Math.min(rawProvW, 18);
+
   // Rank column fits the largest index.
   const rankW = Math.max(1, String(live.length).length);
 
   // Margin + fixed lead columns (mirrors the card sub-row layout to the right
-  // of the name): [2 margin][rank][1][● 1][1][name][1][B timeline][2][TOTAL 7]
+  // of the name): [2 margin][rank][1][● 1][1][name][1][provider][1][B timeline][2][TOTAL 7]
   //   …then breakdown / tok bar / tok value as width allows.
   const MARGIN = 2;
-  const leadW = MARGIN + rankW + 1 + 1 + 1 + nameW + 1; // up to start of timeline
+  const leadW = MARGIN + rankW + 1 + 1 + 1 + nameW + 1 + provW + 1; // up to start of timeline
 
   // Leaderboard column widths from the timeline bar onward. Unlike the cards'
   // bars sub-row, the leaderboard's net/srv/str numbers are UNLABELED in the
@@ -1078,7 +1087,8 @@ function renderLeaderboard(
   //    `${rankStr} ${dot} ` = rankW + 3 visible cols before the name. ──
   const rankHdr = " ".repeat(rankW) + "   "; // rank + 3 (gap + dot slot + gap)
   const nameHdr = padEnd(`${pc.dim}MODEL${pc.reset}`, nameW);
-  let header = `${margin}${rankHdr}${nameHdr} ${pc.dim}${padEnd("TIMELINE", PRINTER_BAR_WIDTH)}${pc.reset}  ${pc.dim}${padStartSafe("TOTAL", 7)}${pc.reset}`;
+  const provHdr = padEnd(`${pc.dim}PROVIDER${pc.reset}`, provW);
+  let header = `${margin}${rankHdr}${nameHdr} ${provHdr} ${pc.dim}${padEnd("TIMELINE", PRINTER_BAR_WIDTH)}${pc.reset}  ${pc.dim}${padStartSafe("TOTAL", 7)}${pc.reset}`;
   if (showBreakdown) {
     header += `${pc.dim}  ${padEnd("net", STAGE_NUM_W)} ${padEnd("srv", STAGE_NUM_W)} ${padEnd("str", STAGE_NUM_W)}${pc.reset}`;
   }
@@ -1096,6 +1106,7 @@ function renderLeaderboard(
     const rankStr = padStartSafe(String(idx + 1), rankW);
     const dot = isFastest ? `${pc.brightGreen}●${pc.reset}` : " ";
     const name = padEnd(`${pc.bold}${truncate(row.model, nameW)}${pc.reset}`, nameW);
+    const prov = padEnd(`${pc.dim}${truncate(row.provider, provW)}${pc.reset}`, provW);
 
     // Timeline bar — shared scale, bg-on-spaces segments + dim track.
     const barCells = timelineBarCells(t.totalMs, scales.maxTotalMs, PRINTER_BAR_WIDTH);
@@ -1133,14 +1144,16 @@ function renderLeaderboard(
     }
     const tokValue = `${tokFg}${padStartSafe(`${Math.round(t.tokensPerSec)} t/s`, PRINTER_TOK_VALUE_W)}${pc.reset}`;
 
-    w(`${margin}${rankStr} ${dot} ${name} ${timeline}  ${total}${breakdown}${tokBar}${tokValue}\n`);
+    w(`${margin}${rankStr} ${dot} ${name} ${prov} ${timeline}  ${total}${breakdown}${tokBar}${tokValue}\n`);
   });
 
-  // ── Unavailable models — dim, no bar ──
+  // ── Unavailable models — dim, no bar. Keep the provider column aligned with
+  //    the live rows so the table reads as one block. ──
   for (const row of unavailable) {
     const rankStr = " ".repeat(rankW);
     const name = padEnd(`${pc.dim}${truncate(row.model, nameW)}${pc.reset}`, nameW);
-    w(`${margin}${rankStr}   ${name} ${pc.dim}— no live route${pc.reset}\n`);
+    const prov = padEnd(`${pc.dim}${truncate(row.provider, provW)}${pc.reset}`, provW);
+    w(`${margin}${rankStr}   ${name} ${prov} ${pc.dim}— no live route${pc.reset}\n`);
   }
 
   // ── Bottom rule — matches the ACTUAL rendered data-row width (not the
