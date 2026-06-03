@@ -145,12 +145,22 @@ export class NativeHandler implements ModelHandler {
       "anthropic-version": originalHeaders["anthropic-version"] || "2023-06-01",
     };
 
-    // Pass through auth headers as-is
+    // Pass through auth headers as-is. If the incoming request carries NO auth
+    // (e.g. the --probe client, which doesn't replicate Claude Code's injected
+    // key) fall back to the api key this handler was constructed with, so the
+    // native passthrough can still authenticate against api.anthropic.com.
     if (originalHeaders["authorization"]) {
       headers["authorization"] = originalHeaders["authorization"];
     }
     if (originalHeaders["x-api-key"]) {
       headers["x-api-key"] = originalHeaders["x-api-key"];
+    }
+    if (
+      !originalHeaders["authorization"] &&
+      !originalHeaders["x-api-key"] &&
+      this.apiKey
+    ) {
+      headers["x-api-key"] = this.apiKey;
     }
     if (originalHeaders["anthropic-beta"]) {
       const incomingBeta = originalHeaders["anthropic-beta"];

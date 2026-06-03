@@ -1148,6 +1148,44 @@ async function probeModelRouting(
           matchedPattern: undefined,
         };
       }
+      // Native-anthropic passthrough: a bare name with no vendor "/" and no
+      // provider "@" (e.g. "internal") resolves to native-anthropic — the
+      // default Claude Code route. The real proxy returns nativeHandler for
+      // this (proxy-server.ts) BEFORE the routing engine runs, so the probe
+      // must mirror that here rather than letting matchRoutingRule send it to
+      // the "*" catch-all → openrouter (which produced the wrong "no live
+      // route"). We pin the default Opus model so the probe sends a real
+      // request through the passthrough like any other link.
+      // NOTE: mirrors the upstream proxy precedence; a later routing worktree
+      // may fold this into a shared helper.
+      if (parsed.provider === "native-anthropic") {
+        // The probe hits the Anthropic API directly, so this must be a real
+        // API-valid model id — NOT Claude Code's internal alias (`claude-opus-4-8`
+        // is the CLI's tier name and the API rejects it with "not a valid model
+        // ID"). `claude-opus-4-1` is the current Opus alias the API accepts
+        // (verified against api.anthropic.com). Honor an explicit override.
+        const opusModel =
+          process.env[ENV.CLAUDISH_MODEL_OPUS] ||
+          process.env[ENV.ANTHROPIC_DEFAULT_OPUS_MODEL] ||
+          "claude-opus-4-1";
+        // IMPORTANT: pin a BARE model name (no `provider@`). The proxy resolves
+        // the native passthrough via `isNative` = no "/" AND no "@" — pinning
+        // `native-anthropic@...` would set hasExplicitProvider=true and DEFEAT
+        // the native branch (the request would 400 / fall to OpenRouter). So
+        // pinProbeModelSpec must keep this bare; the proxy then returns the
+        // nativeHandler (default Claude Code / Opus).
+        return {
+          routes: [
+            {
+              provider: "native-anthropic",
+              modelSpec: opusModel,
+              displayName: "Claude Code (Opus)",
+            },
+          ] as FallbackRoute[],
+          source: "auto-chain" as const,
+          matchedPattern: undefined,
+        };
+      }
       // Routing rules now always include DEFAULT_ROUTING_RULES merged with
       // user overrides — see loadRoutingRules() in providers/routing-rules.ts.
       const routingRules = loadRoutingRules();
@@ -1186,7 +1224,16 @@ async function probeModelRouting(
       let credentialHint: string | undefined;
       let provenance: KeyProvenance | undefined;
 
-      if (providerDef?.isLocal) {
+      if (route.provider === "native-anthropic") {
+        // The probe hits the Anthropic API DIRECTLY (api.anthropic.com) via the
+        // passthrough, so it needs a real ANTHROPIC_API_KEY. Without one we
+        // can't probe — surface that as a clean key-missing row (no request,
+        // no 400) telling the user what to set.
+        hasCredentials = !!process.env.ANTHROPIC_API_KEY;
+        if (!hasCredentials) {
+          credentialHint = "ANTHROPIC_API_KEY (required to probe Claude Code)";
+        }
+      } else if (providerDef?.isLocal) {
         hasCredentials = isLocalProviderEnabled(route.provider);
         if (!hasCredentials) {
           credentialHint = "enable local provider in global config";
@@ -1230,6 +1277,9 @@ async function probeModelRouting(
     parsed: ReturnType<typeof parseModelSpec>,
     chain: ReturnType<typeof buildModelChain>["chain"],
   ): string {
+    if (parsed.provider === "native-anthropic") {
+      return "native passthrough · default Claude Code (Opus)";
+    }
     if (chain.source === "direct") {
       return `explicit · ${parsed.provider} (direct)`;
     }
