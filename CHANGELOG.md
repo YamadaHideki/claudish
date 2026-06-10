@@ -4,18 +4,24 @@ All notable changes to [Claudish](https://github.com/MadAppGang/claudish).
 
 ## [7.5.0] - 2026-06-10
 
-### New Features
-
-- `claudish serve --port <n> --models <path>` — standalone inference gateway for Claude Desktop's third-party inference mode. Advertises Claude-recognized slot ids on `GET /v1/models` and rewrites each request to the real model assigned that slot *(serve)*
-- `claudish providers --json` — credential-presence report (no key material) so external tooling can tell which providers are configured on this machine *(serve)*
-
-### Refactor
-
-- canonical provider slug rename `xai`→`x-ai`, `zai`→`z-ai` to align with the Firebase model catalog. Old `xai`/`zai` forms kept as input aliases; credentials unaffected *(providers)*
-
 ### Documentation
 
-- add `docs/serve-gateway.md` — Claude Desktop gateway handoff: models.json contract, slot routing, live-catalog routing-alignment validation, and dev-build instructions *(serve)*
+- add Claude Desktop gateway handoff + routing-alignment report *(serve)* ([`4bb28e5`](https://github.com/MadAppGang/claudish/commit/4bb28e5c88cd1d96002a3a5bb5b55a20f720d540))
+- update CHANGELOG.md for v7.4.0([`15489ec`](https://github.com/MadAppGang/claudish/commit/15489ec715b6f7e5f765982ff19d62ebb741065e))
+
+### New Features
+
+- v7.5.0 — claudish serve gateway for Claude Desktop + provider slug alignment([`22df65f`](https://github.com/MadAppGang/claudish/commit/22df65f68abbb095f9d4144b1a212ce77d06c46a))
+- claudish serve gateway for Claude Desktop custom models *(serve)* ([`f266cea`](https://github.com/MadAppGang/claudish/commit/f266cea6e6bd4df18566a8eff6c9232fddc2cb52))
+
+### Other Changes
+
+- drop stale .claudemem/ ignore entry([`c435db8`](https://github.com/MadAppGang/claudish/commit/c435db834b8e4241a03b5b46aa075b1c8aaffb8e))
+
+### Refactoring
+
+- canonical slug rename xai→x-ai, zai→z-ai *(providers)* ([`2c87378`](https://github.com/MadAppGang/claudish/commit/2c873782a6ca7df5a86cae8247c1bff250b6481d))
+- drop live-phase pipeline-step indicator *(probe)* ([`859cc53`](https://github.com/MadAppGang/claudish/commit/859cc534480ac1ceb8a4eb689d46f493370a1b98))
 
 ## [7.4.0] - 2026-06-03
 
