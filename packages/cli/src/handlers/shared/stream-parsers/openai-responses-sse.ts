@@ -12,8 +12,15 @@
  */
 
 import type { Context } from "hono";
-import { log, getLogLevel } from "../../../logger.js";
+import { getLogLevel, log } from "../../../logger.js";
 import { wrapAnthropicError } from "../anthropic-error.js";
+
+type FunctionCallState = {
+  name: string;
+  arguments: string;
+  index: number;
+  claudeId?: string;
+};
 
 export function createResponsesStreamHandler(
   c: Context,
@@ -26,7 +33,7 @@ export function createResponsesStreamHandler(
 ): Response {
   const reader = response.body?.getReader();
   if (!reader) {
-    return c.json(wrapAnthropicError(500, "No response body"), 500) as any;
+    return c.json(wrapAnthropicError(500, "No response body"), 500) as Response;
   }
 
   const encoder = new TextEncoder();
@@ -37,20 +44,60 @@ export function createResponsesStreamHandler(
   let inputTokens = 0;
   let outputTokens = 0;
   let hasTextContent = false;
+  let textBlockOpen = false;
   let hasToolUse = false;
   let lastActivity = Date.now();
   let pingInterval: ReturnType<typeof setInterval> | null = null;
   let isClosed = false;
 
   // Track function calls being streamed
-  const functionCalls: Map<
-    string,
-    { name: string; arguments: string; index: number; claudeId?: string }
-  > = new Map();
+  const functionCalls: Map<string, FunctionCallState> = new Map();
+  const orderedFunctionCalls: FunctionCallState[] = [];
+  const startedFunctionCalls = new Set<string>();
+  const stoppedFunctionCalls = new Set<string>();
+
+  const registerFunctionCall = (keys: Array<string | undefined>, fnCallData: FunctionCallState) => {
+    const existing = keys.map((key) => (key ? functionCalls.get(key) : undefined)).find(Boolean);
+    if (existing) {
+      for (const key of keys) {
+        if (key) functionCalls.set(key, existing);
+      }
+      return { fnCall: existing, isNew: false };
+    }
+
+    orderedFunctionCalls.push(fnCallData);
+    for (const key of keys) {
+      if (key) functionCalls.set(key, fnCallData);
+    }
+    return { fnCall: fnCallData, isNew: true };
+  };
+
+  const startFunctionCall = (
+    sendFn: (event: string, data: unknown) => void,
+    fnCall?: FunctionCallState
+  ) => {
+    if (!fnCall?.claudeId || startedFunctionCalls.has(fnCall.claudeId)) return false;
+    startedFunctionCalls.add(fnCall.claudeId);
+    sendFn("content_block_start", {
+      type: "content_block_start",
+      index: fnCall.index,
+      content_block: { type: "tool_use", id: fnCall.claudeId, name: fnCall.name, input: {} },
+    });
+    return true;
+  };
+
+  const stopFunctionCall = (
+    sendFn: (event: string, data: unknown) => void,
+    fnCall?: FunctionCallState
+  ) => {
+    if (!fnCall?.claudeId || stoppedFunctionCalls.has(fnCall.claudeId)) return;
+    stoppedFunctionCalls.add(fnCall.claudeId);
+    sendFn("content_block_stop", { type: "content_block_stop", index: fnCall.index });
+  };
 
   const stream = new ReadableStream({
     start: async (controller) => {
-      const send = (event: string, data: any) => {
+      const send = (event: string, data: unknown) => {
         if (!isClosed) {
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         }
@@ -108,6 +155,7 @@ export function createResponsesStreamHandler(
                     content_block: { type: "text", text: "" },
                   });
                   hasTextContent = true;
+                  textBlockOpen = true;
                 }
                 send("content_block_delta", {
                   type: "content_block_delta",
@@ -123,7 +171,8 @@ export function createResponsesStreamHandler(
                     : `toolu_${openaiCallId.replace(/^fc_/, "")}`;
                   const rawFnName = event.item.name || "";
                   const fnName = opts.toolNameMap?.get(rawFnName) || rawFnName;
-                  const fnIndex = blockIndex + functionCalls.size + (hasTextContent ? 1 : 0);
+                  const fnIndex =
+                    blockIndex + orderedFunctionCalls.length + (hasTextContent ? 1 : 0);
 
                   const fnCallData = {
                     name: fnName,
@@ -132,22 +181,19 @@ export function createResponsesStreamHandler(
                     claudeId: callId,
                   };
 
-                  functionCalls.set(openaiCallId, fnCallData);
-                  if (itemId && itemId !== openaiCallId) {
-                    functionCalls.set(itemId, fnCallData);
-                  }
+                  const { fnCall, isNew } = registerFunctionCall(
+                    [openaiCallId, itemId, callId],
+                    fnCallData
+                  );
+                  if (!isNew) continue;
 
-                  if (hasTextContent && !hasToolUse) {
+                  if (textBlockOpen && !hasToolUse) {
                     send("content_block_stop", { type: "content_block_stop", index: blockIndex });
+                    textBlockOpen = false;
                     blockIndex++;
                   }
 
-                  send("content_block_start", {
-                    type: "content_block_start",
-                    index: fnIndex,
-                    content_block: { type: "tool_use", id: callId, name: fnName, input: {} },
-                  });
-                  hasToolUse = true;
+                  hasToolUse = startFunctionCall(send, fnCall) || hasToolUse;
                 }
               } else if (event.type === "response.reasoning_summary_text.delta") {
                 if (!hasTextContent) {
@@ -157,6 +203,7 @@ export function createResponsesStreamHandler(
                     content_block: { type: "text", text: "" },
                   });
                   hasTextContent = true;
+                  textBlockOpen = true;
                 }
                 send("content_block_delta", {
                   type: "content_block_delta",
@@ -179,7 +226,7 @@ export function createResponsesStreamHandler(
                   const callId = event.item.call_id || event.item.id;
                   const fnCall = functionCalls.get(callId) || functionCalls.get(event.item.id);
                   if (fnCall) {
-                    send("content_block_stop", { type: "content_block_stop", index: fnCall.index });
+                    stopFunctionCall(send, fnCall);
                   }
                 }
               } else if (event.type === "response.incomplete") {
@@ -202,15 +249,15 @@ export function createResponsesStreamHandler(
                 const errCode = err.code || event.code || "";
                 log(`[ResponsesSSE] API error: ${errCode} - ${errMsg}`);
 
-                if (hasTextContent) {
+                if (textBlockOpen) {
                   send("content_block_stop", { type: "content_block_stop", index: blockIndex });
-                  hasTextContent = false;
+                  textBlockOpen = false;
                 }
-                for (const [, fnCall] of functionCalls) {
-                  send("content_block_stop", { type: "content_block_stop", index: fnCall.index });
+                for (const fnCall of orderedFunctionCalls) {
+                  stopFunctionCall(send, fnCall);
                 }
 
-                const errorIdx = blockIndex + functionCalls.size + (hasToolUse ? 1 : 0);
+                const errorIdx = blockIndex + orderedFunctionCalls.length + (hasToolUse ? 1 : 0);
                 send("content_block_start", {
                   type: "content_block_start",
                   index: errorIdx,
@@ -249,8 +296,9 @@ export function createResponsesStreamHandler(
           pingInterval = null;
         }
 
-        if (hasTextContent) {
+        if (textBlockOpen) {
           send("content_block_stop", { type: "content_block_stop", index: blockIndex });
+          textBlockOpen = false;
         }
 
         const stopReason = hasToolUse ? "tool_use" : "end_turn";
@@ -273,14 +321,15 @@ export function createResponsesStreamHandler(
 
         if (!isClosed) {
           try {
-            if (hasTextContent) {
+            if (textBlockOpen) {
               send("content_block_stop", { type: "content_block_stop", index: blockIndex });
+              textBlockOpen = false;
             }
-            for (const [, fnCall] of functionCalls) {
-              send("content_block_stop", { type: "content_block_stop", index: fnCall.index });
+            for (const fnCall of orderedFunctionCalls) {
+              stopFunctionCall(send, fnCall);
             }
 
-            const errorIdx = blockIndex + functionCalls.size + (hasToolUse ? 1 : 0);
+            const errorIdx = blockIndex + orderedFunctionCalls.length + (hasToolUse ? 1 : 0);
             send("content_block_start", {
               type: "content_block_start",
               index: errorIdx,
