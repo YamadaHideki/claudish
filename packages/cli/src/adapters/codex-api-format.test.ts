@@ -56,12 +56,6 @@ describe("CodexAPIFormat reasoning effort", () => {
 });
 
 describe("CodexAPIFormat fast service tier", () => {
-  it("maps Claude Code fast slot requests to priority service tier", () => {
-    expect(codexServiceTierFromRequest({ model: "claude-haiku-4-5-20251001" })).toBe(
-      "priority"
-    );
-  });
-
   it("preserves explicit priority service tier", () => {
     expect(codexServiceTierFromRequest({ service_tier: "priority" })).toBe("priority");
   });
@@ -81,13 +75,19 @@ describe("CodexAPIFormat fast service tier", () => {
     expect(codexServiceTierFromRequest({ model: "gpt-5.5" })).toBeUndefined();
   });
 
-  it("builds a Codex Responses payload with priority service tier for fast slot requests", () => {
-    const payload = buildPayloadFor({
-      model: "claude-haiku-4-5-20251001",
-      thinking: { type: "enabled", budget_tokens: 32000 },
-    });
+  it("builds a Codex Responses payload with priority service tier from Claudish override", () => {
+    const previous = process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER];
+    process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] = "priority";
+    try {
+      const payload = buildPayloadFor({
+        thinking: { type: "enabled", budget_tokens: 32000 },
+      });
 
-    expect(payload.reasoning).toEqual({ effort: "high", summary: "auto" });
-    expect(payload.service_tier).toBe("priority");
+      expect(payload.reasoning).toEqual({ effort: "high", summary: "auto" });
+      expect(payload.service_tier).toBe("priority");
+    } finally {
+      if (previous === undefined) delete process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER];
+      else process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] = previous;
+    }
   });
 });

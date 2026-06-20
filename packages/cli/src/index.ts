@@ -7,7 +7,6 @@ config({ quiet: true }); // Loads .env from current working directory
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { isCodexFastTierCandidate } from "./codex-fast-mode.js";
 
 /**
  * Load API keys and custom endpoints from ~/.claudish/config.json into process.env.
@@ -504,12 +503,7 @@ async function runCli() {
     const modelMap = {
       opus: cliConfig.modelOpus,
       sonnet: cliConfig.modelSonnet,
-      // Claude Code /fast switches to ANTHROPIC_SMALL_FAST_MODEL. For Codex sessions
-      // we set that env var to a Haiku slot and route it back to the selected Codex
-      // model, letting the adapter turn the slot request into service_tier=priority.
-      haiku:
-        cliConfig.modelHaiku ||
-        (explicitModel && isCodexFastTierCandidate(explicitModel) ? explicitModel : undefined),
+      haiku: cliConfig.modelHaiku,
       subagent: cliConfig.modelSubagent,
     };
 

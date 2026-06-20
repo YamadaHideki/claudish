@@ -6,7 +6,6 @@ import { join, basename } from "node:path";
 import { ENV } from "./config.js";
 import type { ClaudishConfig } from "./types.js";
 import { parseModelSpec } from "./providers/model-parser.js";
-import { CODEX_FAST_SLOT_MODEL, isCodexFastTierCandidate } from "./codex-fast-mode.js";
 import { setClaudeCodeRunning } from "./telemetry.js";
 
 /**
@@ -361,9 +360,7 @@ export async function runClaudeWithProxy(
     // (unless user explicitly specified a model)
     if (modelId) {
       env[ENV.ANTHROPIC_MODEL] = modelId;
-      env[ENV.ANTHROPIC_SMALL_FAST_MODEL] = isCodexFastTierCandidate(modelId)
-        ? CODEX_FAST_SLOT_MODEL
-        : modelId;
+      env[ENV.ANTHROPIC_SMALL_FAST_MODEL] = modelId;
     }
   } else {
     // Set Claude Code standard model environment variables
@@ -372,9 +369,7 @@ export async function runClaudeWithProxy(
     // so the proxy can match "opus"/"sonnet"/"haiku" in the model name and apply mappings
     if (modelId) {
       env[ENV.ANTHROPIC_MODEL] = modelId;
-      env[ENV.ANTHROPIC_SMALL_FAST_MODEL] = isCodexFastTierCandidate(modelId)
-        ? CODEX_FAST_SLOT_MODEL
-        : modelId;
+      env[ENV.ANTHROPIC_SMALL_FAST_MODEL] = modelId;
     }
     if (hasNativeAnthropicMapping(config)) {
       // Native Claude model detected — let Claude Code use its real subscription

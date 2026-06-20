@@ -68,13 +68,7 @@ export function codexReasoningEffortFromRequest(claudeRequest: any): CodexReason
 export function codexServiceTierFromRequest(claudeRequest: any): "priority" | undefined {
   if (process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] === "priority") return "priority";
   if (claudeRequest?.service_tier === "priority") return "priority";
-
-  // Claude Code's /fast toggles requests to ANTHROPIC_SMALL_FAST_MODEL. Claudish sets
-  // that env var to a Claude Haiku slot for Codex sessions, then maps the slot back
-  // to the selected Codex model. Seeing a Haiku request here therefore means the
-  // user intentionally enabled fast mode in the TUI.
-  const requestedModel = typeof claudeRequest?.model === "string" ? claudeRequest.model : "";
-  return requestedModel.toLowerCase().includes("haiku") ? "priority" : undefined;
+  return undefined;
 }
 
 export class CodexAPIFormat extends BaseAPIFormat {
