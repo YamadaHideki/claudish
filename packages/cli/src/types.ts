@@ -17,6 +17,7 @@ export interface ClaudishConfig {
   monitor: boolean; // Monitor mode - proxy to real Anthropic API and log everything
   stdin: boolean; // Read prompt from stdin instead of args
   codexFast?: boolean; // Enable Codex Responses priority service tier
+  codexEffort?: "low" | "medium" | "high" | "xhigh"; // Override Codex reasoning effort
   openrouterApiKey?: string; // Optional in monitor mode
   anthropicApiKey?: string; // Required in monitor mode
   freeOnly?: boolean; // Show only free models in selector

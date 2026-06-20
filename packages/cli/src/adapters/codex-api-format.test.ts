@@ -30,6 +30,18 @@ describe("CodexAPIFormat reasoning effort", () => {
     expect(codexReasoningEffortFromRequest({ reasoning_effort: "max" })).toBe("xhigh");
   });
 
+  it("honors the Claudish Codex reasoning effort override", () => {
+    const previous = process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT];
+    process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT] = "high";
+    try {
+      expect(codexReasoningEffortFromRequest({})).toBe("high");
+      expect(buildPayloadFor({}).reasoning).toEqual({ effort: "high", summary: "auto" });
+    } finally {
+      if (previous === undefined) delete process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT];
+      else process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT] = previous;
+    }
+  });
+
   it("defaults to medium when no effort signal is present", () => {
     expect(codexReasoningEffortFromRequest({})).toBe("medium");
     expect(codexReasoningEffortFromRequest({ thinking: { budget_tokens: "high" } })).toBe("medium");

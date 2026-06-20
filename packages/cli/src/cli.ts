@@ -123,6 +123,16 @@ function clearAllModelCaches(): void {
   }
 }
 
+function normalizeCodexCliEffort(value: string | undefined): "low" | "medium" | "high" | "xhigh" | undefined {
+  if (!value) return undefined;
+  const normalized = value.toLowerCase().trim();
+  if (normalized === "minimal" || normalized === "low") return "low";
+  if (normalized === "medium") return "medium";
+  if (normalized === "high") return "high";
+  if (normalized === "xhigh" || normalized === "max" || normalized === "ultracode") return "xhigh";
+  return undefined;
+}
+
 /**
  * Parse the --advisor flag value.
  * Format: "model1,model2,model3:collector"
@@ -226,6 +236,11 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
     config.codexFast = true;
   }
 
+  const envCodexEffort = normalizeCodexCliEffort(process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT]);
+  if (envCodexEffort) {
+    config.codexEffort = envCodexEffort;
+  }
+
   // Load diagMode from settings file (lowest priority — env/CLI override)
   try {
     const fileConfig = loadConfig();
@@ -297,7 +312,17 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
       }
     } else if (arg === "--fast") {
       config.codexFast = true;
-      process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] = "priority";
+    } else if (arg === "--effort") {
+      const effortArg = args[i + 1];
+      const codexEffort = normalizeCodexCliEffort(effortArg);
+      if (codexEffort) {
+        config.codexEffort = codexEffort;
+      }
+      // Preserve Claude Code's native --effort handling.
+      config.claudeArgs.push(arg);
+      if (effortArg && !effortArg.startsWith("-")) {
+        config.claudeArgs.push(args[++i]);
+      }
     } else if (arg === "--log-level") {
       const levelArg = args[++i];
       if (!levelArg || !["debug", "info", "minimal"].includes(levelArg)) {
@@ -1885,6 +1910,7 @@ OPTIONS:
                            Also: CLAUDISH_DIAG_MODE env var or "diagMode" in config.json
   --log-level <level>      Log verbosity: debug (full), info (truncated), minimal (labels only)
   --fast                   Enable Codex priority service tier (service_tier=priority)
+  --effort <level>         Claude Code effort passthrough + Codex reasoning.effort override
   -q, --quiet              Suppress [claudish] log messages (default in single-shot mode)
   -v, --verbose            Show [claudish] log messages (default in interactive mode)
   --json                   Output in JSON format for tool integration (implies --quiet)

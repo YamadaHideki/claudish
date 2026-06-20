@@ -52,10 +52,24 @@ describe("Group 1: Backward compatibility", () => {
       const config = await parseArgs(["--model", "cx@gpt-5.5", "--fast", "task"]);
       expect(config.codexFast).toBe(true);
       expect(config.claudeArgs).toEqual(["task"]);
-      expect(process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER]).toBe("priority");
+      expect(process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER]).toBeUndefined();
     } finally {
       if (previous === undefined) delete process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER];
       else process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] = previous;
+    }
+  });
+
+  test("--effort sets Codex reasoning effort override and still passes through to Claude Code", async () => {
+    const previous = process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT];
+    delete process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT];
+    try {
+      const config = await parseArgs(["--model", "cx@gpt-5.5", "--effort", "high", "task"]);
+      expect(config.codexEffort).toBe("high");
+      expect(config.claudeArgs).toEqual(["--effort", "high", "task"]);
+      expect(process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT]).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT];
+      else process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT] = previous;
     }
   });
 });

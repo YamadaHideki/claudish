@@ -216,6 +216,13 @@ async function runCli() {
     // Parse CLI arguments
     const cliConfig = await parseArgs(process.argv.slice(2));
 
+    if (cliConfig.codexFast) {
+      process.env.CLAUDISH_CODEX_SERVICE_TIER = "priority";
+    }
+    if (cliConfig.codexEffort) {
+      process.env.CLAUDISH_CODEX_REASONING_EFFORT = cliConfig.codexEffort;
+    }
+
     // Team mode: run models in parallel (skip normal Claude Code path)
     if (cliConfig.team && cliConfig.team.length > 0) {
       // Resolve prompt: --file flag, or positional args from claudeArgs

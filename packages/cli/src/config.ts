@@ -34,6 +34,7 @@ export const ENV = {
   CLAUDISH_SUMMARIZE_TOOLS: "CLAUDISH_SUMMARIZE_TOOLS", // Summarize tool descriptions to reduce prompt size
   CLAUDISH_DIAG_MODE: "CLAUDISH_DIAG_MODE", // Diagnostic output mode: auto (default), logfile, off
   CLAUDISH_CODEX_SERVICE_TIER: "CLAUDISH_CODEX_SERVICE_TIER", // Codex Responses service_tier override (e.g. priority)
+  CLAUDISH_CODEX_REASONING_EFFORT: "CLAUDISH_CODEX_REASONING_EFFORT", // Codex reasoning.effort override
 } as const;
 
 // OpenRouter API Configuration

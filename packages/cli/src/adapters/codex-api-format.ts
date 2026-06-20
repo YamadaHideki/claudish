@@ -52,6 +52,7 @@ function normalizeCodexReasoningEffort(value: unknown): CodexReasoningEffort | u
 
 export function codexReasoningEffortFromRequest(claudeRequest: any): CodexReasoningEffort {
   const explicitEffort =
+    normalizeCodexReasoningEffort(process.env[ENV.CLAUDISH_CODEX_REASONING_EFFORT]) ??
     normalizeCodexReasoningEffort(claudeRequest?.reasoning_effort) ??
     normalizeCodexReasoningEffort(claudeRequest?.reasoning?.effort);
   if (explicitEffort) return explicitEffort;
