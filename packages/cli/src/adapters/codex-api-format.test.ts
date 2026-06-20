@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { ENV } from "../config.js";
 import {
   CodexAPIFormat,
   codexReasoningEffortFromRequest,
@@ -51,6 +52,17 @@ describe("CodexAPIFormat fast service tier", () => {
 
   it("preserves explicit priority service tier", () => {
     expect(codexServiceTierFromRequest({ service_tier: "priority" })).toBe("priority");
+  });
+
+  it("honors the Claudish Codex service tier override", () => {
+    const previous = process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER];
+    process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] = "priority";
+    try {
+      expect(codexServiceTierFromRequest({ model: "gpt-5.5" })).toBe("priority");
+    } finally {
+      if (previous === undefined) delete process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER];
+      else process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] = previous;
+    }
   });
 
   it("does not enable priority service tier for normal requests", () => {

@@ -11,6 +11,7 @@
  * This format handles Codex models only. All other OpenAI models use OpenAIAPIFormat.
  */
 
+import { ENV } from "../config.js";
 import { BaseAPIFormat, type AdapterResult, matchesModelFamily } from "./base-api-format.js";
 import type { StreamFormat } from "../providers/transport/types.js";
 
@@ -64,6 +65,7 @@ export function codexReasoningEffortFromRequest(claudeRequest: any): CodexReason
 }
 
 export function codexServiceTierFromRequest(claudeRequest: any): "priority" | undefined {
+  if (process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] === "priority") return "priority";
   if (claudeRequest?.service_tier === "priority") return "priority";
 
   // Claude Code's /fast toggles requests to ANTHROPIC_SMALL_FAST_MODEL. Claudish sets

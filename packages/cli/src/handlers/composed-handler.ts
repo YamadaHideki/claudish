@@ -367,6 +367,17 @@ export class ComposedHandler implements ModelHandler {
       requestPayload = this.provider.transformPayload(requestPayload);
     }
 
+    if (getLogLevel() === "debug") {
+      log(
+        `[${this.provider.displayName}] Payload controls: ${JSON.stringify({
+          model: requestPayload.model,
+          reasoning: requestPayload.reasoning,
+          reasoning_effort: requestPayload.reasoning_effort,
+          service_tier: requestPayload.service_tier,
+        })}`
+      );
+    }
+
     // 6. Middleware before request.
     // Use bareModelName — must match the key used by getActiveNames() and
     // afterStreamComplete() so the same set of middlewares is selected at both ends.

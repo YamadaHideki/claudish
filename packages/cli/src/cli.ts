@@ -178,6 +178,7 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
     jsonOutput: false, // No JSON output by default
     monitor: false, // Monitor mode disabled by default
     stdin: false, // Read prompt from stdin instead of args
+    codexFast: false, // Codex priority service tier disabled by default
     freeOnly: false, // Show all models by default
     noLogs: false, // Always-on structural logging enabled by default
     diagMode: "auto" as const, // Auto-detect best diagnostic output mode
@@ -219,6 +220,10 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
   const envSummarizeTools = process.env[ENV.CLAUDISH_SUMMARIZE_TOOLS];
   if (envSummarizeTools === "true" || envSummarizeTools === "1") {
     config.summarizeTools = true;
+  }
+
+  if (process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] === "priority") {
+    config.codexFast = true;
   }
 
   // Load diagMode from settings file (lowest priority — env/CLI override)
@@ -290,6 +295,9 @@ export async function parseArgs(args: string[]): Promise<ClaudishConfig> {
       if (config.logLevel === "info") {
         config.logLevel = "debug";
       }
+    } else if (arg === "--fast") {
+      config.codexFast = true;
+      process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] = "priority";
     } else if (arg === "--log-level") {
       const levelArg = args[++i];
       if (!levelArg || !["debug", "info", "minimal"].includes(levelArg)) {
@@ -1876,6 +1884,7 @@ OPTIONS:
   --diag-mode <mode>       Diagnostic output: auto (default), logfile, off
                            Also: CLAUDISH_DIAG_MODE env var or "diagMode" in config.json
   --log-level <level>      Log verbosity: debug (full), info (truncated), minimal (labels only)
+  --fast                   Enable Codex priority service tier (service_tier=priority)
   -q, --quiet              Suppress [claudish] log messages (default in single-shot mode)
   -v, --verbose            Show [claudish] log messages (default in interactive mode)
   --json                   Output in JSON format for tool integration (implies --quiet)

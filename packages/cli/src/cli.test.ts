@@ -10,6 +10,7 @@
 
 import { test, expect, describe } from "bun:test";
 import { parseArgs } from "./cli.js";
+import { ENV } from "./config.js";
 import type { ClaudishConfig } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,20 @@ describe("Group 1: Backward compatibility", () => {
     const config = await parseArgs(["--model", "grok", "--debug"]);
     expect(config.model).toBe("grok");
     expect(config.debug).toBe(true);
+  });
+
+  test("--fast enables Codex priority service tier without passing through to Claude Code", async () => {
+    const previous = process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER];
+    delete process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER];
+    try {
+      const config = await parseArgs(["--model", "cx@gpt-5.5", "--fast", "task"]);
+      expect(config.codexFast).toBe(true);
+      expect(config.claudeArgs).toEqual(["task"]);
+      expect(process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER]).toBe("priority");
+    } finally {
+      if (previous === undefined) delete process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER];
+      else process.env[ENV.CLAUDISH_CODEX_SERVICE_TIER] = previous;
+    }
   });
 });
 
