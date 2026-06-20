@@ -37,6 +37,43 @@ export function normalizeCodexModel(modelId: string | undefined): string {
   return strippedModel.trim();
 }
 
+export type CodexReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
+function normalizeCodexReasoningEffort(value: unknown): CodexReasoningEffort | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.toLowerCase().trim();
+  if (normalized === "minimal" || normalized === "low") return "low";
+  if (normalized === "medium") return "medium";
+  if (normalized === "high") return "high";
+  if (normalized === "xhigh" || normalized === "max" || normalized === "ultracode") return "xhigh";
+  return undefined;
+}
+
+export function codexReasoningEffortFromRequest(claudeRequest: any): CodexReasoningEffort {
+  const explicitEffort =
+    normalizeCodexReasoningEffort(claudeRequest?.reasoning_effort) ??
+    normalizeCodexReasoningEffort(claudeRequest?.reasoning?.effort);
+  if (explicitEffort) return explicitEffort;
+
+  const budget = claudeRequest?.thinking?.budget_tokens;
+  if (typeof budget !== "number" || !Number.isFinite(budget)) return "medium";
+  if (budget < 4000) return "low";
+  if (budget < 16000) return "medium";
+  if (budget < 64000) return "high";
+  return "xhigh";
+}
+
+export function codexServiceTierFromRequest(claudeRequest: any): "priority" | undefined {
+  if (claudeRequest?.service_tier === "priority") return "priority";
+
+  // Claude Code's /fast toggles requests to ANTHROPIC_SMALL_FAST_MODEL. Claudish sets
+  // that env var to a Claude Haiku slot for Codex sessions, then maps the slot back
+  // to the selected Codex model. Seeing a Haiku request here therefore means the
+  // user intentionally enabled fast mode in the TUI.
+  const requestedModel = typeof claudeRequest?.model === "string" ? claudeRequest.model : "";
+  return requestedModel.toLowerCase().includes("haiku") ? "priority" : undefined;
+}
+
 export class CodexAPIFormat extends BaseAPIFormat {
   constructor(modelId: string) {
     super(modelId);
@@ -88,13 +125,18 @@ export class CodexAPIFormat extends BaseAPIFormat {
       store: false,
       include: ["reasoning.encrypted_content"],
       reasoning: {
-        effort: "medium",
+        effort: codexReasoningEffortFromRequest(claudeRequest),
         summary: "auto",
       },
       text: {
         verbosity: "medium",
       },
     };
+
+    const serviceTier = codexServiceTierFromRequest(claudeRequest);
+    if (serviceTier) {
+      payload.service_tier = serviceTier;
+    }
 
     if (claudeRequest.system) {
       payload.instructions = claudeRequest.system;
